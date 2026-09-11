@@ -1,0 +1,5 @@
+Name,Email,Division,Role,Seniority,Contract,CostMonthly,Capacity,LeaveAllowance,StartDate,Active,Allocation,Skills,Notes
+Jane Doe,jane.doe@example.com,2D,2D Environment Artist,Junior 2,staff,0,100,15,2025-04-01,yes,SKY:60 HBR:40,Painting:4 Props:3 Photoshop:5,
+John Roe,john.roe@example.com,3D,Senior 3D Artist,Senior,staff,0,100,15,2023-09-11,yes,SKY:100,Modelling:5 Texturing:4 Lookdev:3,
+Sam Lee,sam.lee@example.com,ANIM,Animator,Junior 1,contract,0,100,12,2026-02-02,yes,HBR:100,Character:3,Contract ends 2026-12-31
+Studio Example,,2D,Outsourcing partner,Vendor,outsource,0,100,0,,yes,SKY:100,,Monthly retainer not a salary

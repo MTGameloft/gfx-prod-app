@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signed in</title>
+<style>
+  body { font: 14px "Segoe UI", system-ui, sans-serif; display: grid; place-items: center;
+         height: 100vh; margin: 0; background: #faf9f8; color: #242424; text-align: center; }
+  .ok { color: #107c10; font-size: 26px; }
+  .err { color: #a4262c; max-width: 440px; padding: 0 20px; }
+  @media (prefers-color-scheme: dark) { body { background: #1f1f1f; color: #fff } }
+</style>
+<script src="https://res.cdn.office.net/teams-js/2.24.0/js/MicrosoftTeams.min.js" crossorigin="anonymous"></script>
+<script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js" crossorigin="anonymous"
+        onerror="this.remove();document.write('<scr'+'ipt src=&quot;https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.min.js&quot;><\/scr'+'ipt>')"></script>
+</head>
+<body>
+<div id="msg">Completing sign-in…</div>
+
+<script>
+/* Step 2 of the auth popup.
+   MSAL has just come back from Microsoft with the response in the URL hash.
+   handleRedirectPromise() writes the tokens into localStorage — which the main
+   app window shares, being the same origin — and then we close the popup. */
+(function () {
+  const el = document.getElementById('msg');
+
+  const done = (ok, payload) => {
+    el.className = ok ? 'ok' : 'err';
+    el.textContent = ok ? '✓ Signed in. You can close this window.' : payload;
+    let notified = false;
+    try {
+      microsoftTeams.app.initialize().then(() => {
+        notified = true;
+        ok ? microsoftTeams.authentication.notifySuccess(payload || 'ok')
+           : microsoftTeams.authentication.notifyFailure(payload);
+      }).catch(() => {});
+    } catch {}
+    try { window.opener?.postMessage({ __gfxauth: payload || 'ok', ok }, location.origin); } catch {}
+    if (ok) setTimeout(() => { try { window.close(); } catch {} }, notified ? 400 : 900);
+  };
+
+  if (!window.msal) return done(false, 'The Microsoft sign-in library could not be loaded.');
+
+  const q = new URLSearchParams(location.search);
+  // MSAL stashes the client id in its own cache; fall back to the query string.
+  let clientId = q.get('clientId');
+  if (!clientId) {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      const m = /^([0-9a-f-]{36})\./.exec(k || '');
+      if (m) { clientId = m[1]; break; }
+    }
+  }
+  if (!clientId) return done(false, 'Could not determine the application ID for this sign-in.');
+
+  const app = new msal.PublicClientApplication({
+    auth: { clientId, redirectUri: location.href.split('#')[0], navigateToLoginRequestUrl: false },
+    cache: { cacheLocation: 'localStorage', storeAuthStateInCookie: false },
+  });
+
+  (async () => {
+    try {
+      await app.initialize?.();
+      const res = await app.handleRedirectPromise();
+      const acct = res?.account || app.getAllAccounts()[0];
+      if (!acct) throw new Error('No account came back from Microsoft.');
+      app.setActiveAccount(acct);
+      done(true, acct.username || 'ok');
+    } catch (e) {
+      done(false, 'error:' + (e.errorMessage || e.message || String(e)));
+    }
+  })();
+})();
+</script>
+</body>
+</html>

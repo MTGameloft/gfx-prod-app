@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signing in…</title>
+<style>
+  body { font: 14px "Segoe UI", system-ui, sans-serif; display: grid; place-items: center;
+         height: 100vh; margin: 0; background: #faf9f8; color: #242424; text-align: center; }
+  .sp { width: 24px; height: 24px; border: 2.5px solid #e1dfdd; border-top-color: #6264A7;
+        border-radius: 50%; animation: s .7s linear infinite; margin: 0 auto 14px; }
+  @keyframes s { to { transform: rotate(360deg) } }
+  .err { color: #a4262c; max-width: 420px; padding: 0 20px; }
+  @media (prefers-color-scheme: dark) { body { background: #1f1f1f; color: #fff } }
+</style>
+<script src="https://res.cdn.office.net/teams-js/2.24.0/js/MicrosoftTeams.min.js" crossorigin="anonymous"></script>
+<script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js" crossorigin="anonymous"
+        onerror="this.remove();document.write('<scr'+'ipt src=&quot;https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.min.js&quot;><\/scr'+'ipt>')"></script>
+</head>
+<body>
+<div>
+  <div class="sp"></div>
+  <div id="msg">Redirecting to Microsoft sign-in…</div>
+</div>
+
+<script>
+/* Step 1 of the Teams-safe auth popup.
+   Runs in a popup window served from our own origin, kicks off the MSAL
+   redirect to Microsoft, and lets auth-end.html catch the result. */
+(async function () {
+  const q = new URLSearchParams(location.search);
+  const clientId = q.get('clientId');
+  const tenantId = q.get('tenantId') || 'common';
+  const scopes   = (q.get('scopes') || 'User.Read').split(' ').filter(Boolean);
+  const hint     = q.get('login_hint') || undefined;
+
+  const fail = m => {
+    document.querySelector('.sp').remove();
+    document.getElementById('msg').className = 'err';
+    document.getElementById('msg').textContent = m;
+    try { microsoftTeams.app.initialize().then(() => microsoftTeams.authentication.notifyFailure(m)); } catch {}
+    try { window.opener?.postMessage({ __gfxauth: m, ok: false }, location.origin); } catch {}
+  };
+
+  if (!clientId) return fail('No application (client) ID was supplied.');
+  if (!window.msal) return fail('The Microsoft sign-in library could not be loaded.');
+
+  try {
+    const app = new msal.PublicClientApplication({
+      auth: {
+        clientId,
+        authority: 'https://login.microsoftonline.com/' + tenantId,
+        redirectUri: new URL('auth-end.html', location.href).href,
+        navigateToLoginRequestUrl: false,
+      },
+      cache: { cacheLocation: 'localStorage', storeAuthStateInCookie: false },
+    });
+    await app.initialize?.();
+    await app.loginRedirect({ scopes, loginHint: hint, prompt: hint ? undefined : 'select_account' });
+  } catch (e) {
+    fail(e.message || String(e));
+  }
+})();
+</script>
+</body>
+</html>

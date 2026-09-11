@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="default" data-density="normal">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="color-scheme" content="light dark">
+<title>GFX Prod App</title>
+<link rel="icon" href="assets/favicon.svg">
+<link rel="stylesheet" href="css/app.css">
+<!-- Teams JS SDK. Absent when the page is opened outside Teams (or offline);
+     teams.js detects that and runs the app in standalone mode. -->
+<script src="https://res.cdn.office.net/teams-js/2.24.0/js/MicrosoftTeams.min.js"
+        crossorigin="anonymous" onerror="window.__noTeamsSdk=true"></script>
+</head>
+<body>
+
+<div id="splash"><div style="text-align:center">
+  <div class="spin" style="margin:0 auto 12px"></div>
+  <div class="tiny mute">Loading GFX Prod App…</div>
+</div></div>
+
+<div id="shell" hidden>
+
+  <aside id="rail">
+    <div class="brand">
+      <div class="brand-mark" id="brandMark">GFX</div>
+      <div class="brand-text">
+        <b>GFX Prod App</b>
+        <span id="brandSub">Art Production Console</span>
+      </div>
+    </div>
+    <nav id="nav"></nav>
+    <div class="rail-foot">
+      <div class="who" id="whoBtn" title="Profile &amp; settings">
+        <div class="avatar" id="whoAv">?</div>
+        <div class="who-txt">
+          <b id="whoName">Sign in</b>
+          <span id="whoRole">—</span>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <div id="main">
+    <header id="top">
+      <button class="btn icon subtle" id="railToggle" title="Collapse sidebar (Ctrl+B)">
+        <svg class="ico"><use href="#i-menu"></use></svg>
+      </button>
+      <div>
+        <h1 id="pageTitle">Dashboard</h1>
+        <div class="crumb" id="pageCrumb"></div>
+      </div>
+      <div class="spacer"></div>
+      <div id="topActions" class="row"></div>
+      <button class="btn icon subtle" id="cmdBtn" title="Quick search (Ctrl+K)">
+        <svg class="ico"><use href="#i-search"></use></svg>
+      </button>
+      <button class="btn icon subtle" id="themeBtn" title="Toggle theme">
+        <svg class="ico"><use href="#i-theme"></use></svg>
+      </button>
+    </header>
+    <main id="view"></main>
+  </div>
+
+</div>
+
+<div id="toasts"></div>
+
+<!-- ------------------------------------------------------------------ -->
+<!-- Icon sprite. Stroke-based 24x24, inherits currentColor.             -->
+<!-- ------------------------------------------------------------------ -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<defs>
+  <g id="_s" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></g>
+</defs>
+<symbol id="i-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></symbol>
+<symbol id="i-theme" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 3a9 9 0 100 18 9 9 0 000-18zM12 3v18"/></symbol>
+<symbol id="i-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5L12 3l9 7.5"/><path d="M5.5 9.5V20h13V9.5"/><path d="M9.5 20v-6h5v6"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></symbol>
+<symbol id="i-board" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="3" y="4" width="5.5" height="16" rx="1.5"/><rect x="9.75" y="4" width="5.5" height="11" rx="1.5"/><rect x="16.5" y="4" width="4.5" height="8" rx="1.5"/></symbol>
+<symbol id="i-target" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.8"/><circle cx="12" cy="12" r="1.4"/></symbol>
+<symbol id="i-people" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="9" cy="8" r="3.4"/><path d="M2.8 20c0-3.4 2.8-5.6 6.2-5.6s6.2 2.2 6.2 5.6"/><path d="M16.4 5.2a3.4 3.4 0 010 6.4M18 14.8c2 .7 3.4 2.5 3.4 5.2"/></symbol>
+<symbol id="i-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M3 6.5A1.5 1.5 0 014.5 5h4.2l2 2.6h8.8A1.5 1.5 0 0121 9.1v9.4a1.5 1.5 0 01-1.5 1.5h-15A1.5 1.5 0 013 18.5z"/></symbol>
+<symbol id="i-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M13.5 3H6.5A1.5 1.5 0 005 4.5v15A1.5 1.5 0 006.5 21h11a1.5 1.5 0 001.5-1.5V8.5z"/><path d="M13.5 3v5.5H19"/></symbol>
+<symbol id="i-cash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.6"/><path d="M6 10v4M18 10v4"/></symbol>
+<symbol id="i-cal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 9.6h17M8 3.2v3.4M16 3.2v3.4"/></symbol>
+<symbol id="i-chart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 20V4"/><path d="M4 20h16"/><path d="M8 17v-5M12.5 17V8M17 17v-7"/></symbol>
+<symbol id="i-cog" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3.1"/><path d="M19.4 14.4l1.7 1-1.9 3.3-1.9-.7a7.6 7.6 0 01-1.8 1l-.3 2h-3.8l-.3-2a7.6 7.6 0 01-1.8-1l-1.9.7-1.9-3.3 1.7-1a7.7 7.7 0 010-2.1l-1.7-1 1.9-3.3 1.9.7a7.6 7.6 0 011.8-1l.3-2h3.8l.3 2c.64.25 1.24.58 1.8 1l1.9-.7 1.9 3.3-1.7 1a7.7 7.7 0 010 2.1z"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+<symbol id="i-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 20l.8-4 11-11 3.2 3.2-11 11z"/><path d="M14.5 5.5l3.2 3.2"/></symbol>
+<symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 7h16M9.5 7V4.6h5V7M6.5 7l1 13h9l1-13"/></symbol>
+<symbol id="i-dots" viewBox="0 0 24 24" fill="currentColor"><circle cx="6" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="18" cy="12" r="1.7"/></symbol>
+<symbol id="i-warn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 4.5L2.8 20h18.4z"/><path d="M12 10v4.4M12 17.3v.1"/></symbol>
+<symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="8.6"/><path d="M12 11v5.2M12 8.1v.1"/></symbol>
+<symbol id="i-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M10.5 13.5a4 4 0 005.7 0l3-3a4 4 0 10-5.7-5.7l-1.3 1.3"/><path d="M13.5 10.5a4 4 0 00-5.7 0l-3 3a4 4 0 105.7 5.7l1.3-1.3"/></symbol>
+<symbol id="i-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11.5"/><path d="M7 11l5 5 5-5"/><path d="M4.5 20h15"/></symbol>
+<symbol id="i-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V8.5"/><path d="M7 13l5-5 5 5"/><path d="M4.5 4h15"/></symbol>
+<symbol id="i-save" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 6a2 2 0 012-2h9l5 5v11a2 2 0 01-2 2H6a2 2 0 01-2-2z"/><path d="M8 4v5h7M8 20v-6h8v6"/></symbol>
+<symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M20 12a8 8 0 11-2.6-5.9"/><path d="M20 4v5h-5"/></symbol>
+<symbol id="i-cloud" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M7 19a4.2 4.2 0 01-.4-8.4A5.6 5.6 0 0117.6 10 3.9 3.9 0 0117 19z"/></symbol>
+<symbol id="i-flag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M5.5 21V4"/><path d="M5.5 5h11l-2 3.4 2 3.4h-11z"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="8.6"/><path d="M12 7v5.3l3.3 2"/></symbol>
+<symbol id="i-note" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="4" y="3.5" width="16" height="17" rx="2"/><path d="M8 8.5h8M8 12.5h8M8 16.5h5"/></symbol>
+<symbol id="i-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/></symbol>
+<symbol id="i-handshake" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12.5l3.2-3.2a2 2 0 012.8 0l1.3 1.3"/><path d="M21.5 11.5l-3.2 3.2a2 2 0 01-2.8 0L11.2 10.4"/><path d="M7 7.5l2.6-2.1a2.4 2.4 0 013 0L15 7.5"/><path d="M9 16l1.6 1.6a1.7 1.7 0 002.4 0"/></symbol>
+<symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10.5" rx="2"/><path d="M8.2 10.5V7.6a3.8 3.8 0 017.6 0v2.9"/><circle cx="12" cy="15.7" r="1.15" fill="currentColor" stroke="none"/></symbol>
+<symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M12 3l7.5 2.8v5.6c0 4.4-3 8.2-7.5 9.6-4.5-1.4-7.5-5.2-7.5-9.6V5.8z"/><path d="M9 12.2l2.2 2.2 4-4.2"/></symbol>
+<symbol id="i-sheet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M3.5 9h17M3.5 14.5h17M9.2 9v11M14.8 9v11"/></symbol>
+<symbol id="i-undo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9h9.5a5.5 5.5 0 010 11H8"/><path d="M7.5 5.5L4 9l3.5 3.5"/></symbol>
+<symbol id="i-star" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M12 3.6l2.6 5.4 5.9.8-4.3 4.1 1.1 5.9L12 17l-5.3 2.8 1.1-5.9L3.5 9.8l5.9-.8z"/></symbol>
+</svg>
+
+<script type="module" src="js/app.js"></script>
+<noscript><p style="padding:24px">GFX Prod App needs JavaScript enabled.</p></noscript>
+</body>
+</html>
