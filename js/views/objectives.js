@@ -132,7 +132,7 @@ function card(o) {
           return `<div class="row okr-ms" data-ms="${esc(m.id)}" style="gap:8px;align-items:center">
             <span class="chip tiny ${late ? 'risk' : mst.chip}">${late ? 'Late' : esc(mst.label)}</span>
             <span class="tiny" style="flex:1;min-width:0">${esc(m.name)}</span>
-            <span class="tiny mute nowrap">${esc(fmtDate(m.date, 'long'))}</span>
+            <span class="tiny mute nowrap">${m.start ? esc(fmtDate(m.start)) + ' → ' : ''}${esc(fmtDate(m.date, 'long'))}</span>
             <button class="btn icon sm subtle" data-act="ms-edit" title="Edit"><svg class="ico"><use href="#i-edit"></use></svg></button>
             <button class="btn icon sm subtle" data-act="ms-del" title="Remove"><svg class="ico"><use href="#i-x"></use></svg></button>
           </div>`;
@@ -189,6 +189,7 @@ function krRow(o, k) {
   <div class="okr-kr" data-kr="${k.id}">
     <div style="min-width:0">
       <div class="tiny" style="margin-bottom:4px;line-height:1.45">${esc(k.text)}
+        ${k.start && k.due ? `<span class="tiny mute nowrap">${esc(fmtDate(k.start))} →</span>` : ''}
         ${k.due ? dueChip(k.due, p >= 100) : ''}</div>
       <span class="bar thin"><i class="${cls}" style="width:${p}%"></i></span>
     </div>
@@ -279,9 +280,11 @@ async function editKr(objId, krId) {
         <input type="number" id="k_current" step="any" value="${v.current}"></label>
       <label class="fld" style="grid-column:span 4"><span>Unit</span>
         <input id="k_unit" value="${esc(v.unit || '')}" placeholder="%, bugs, done"></label>
-      <label class="fld" style="grid-column:span 6"><span>Due</span>
+      <label class="fld" style="grid-column:span 3"><span>Starts</span>
+        <input type="date" id="k_start" value="${esc(v.start || '')}"></label>
+      <label class="fld" style="grid-column:span 3"><span>Due</span>
         <input type="date" id="k_due" value="${esc(v.due || '')}">
-        <span class="hint tiny">Optional. Appears on the timeline and on the row.</span></label>
+        <span class="hint tiny">Both optional. With a start, the timeline draws a span.</span></label>
       <label class="fld" style="grid-column:span 6"><span>Direction</span>
         <label class="row" style="gap:7px;height:32px"><input type="checkbox" id="k_invert" ${v.invert ? 'checked' : ''}>
           <span class="tiny">Lower is better (bug count, variance %)</span></label></label>
@@ -292,9 +295,12 @@ async function editKr(objId, krId) {
       root.querySelector('[data-ok]').onclick = () => {
         const g = k2 => root.querySelector('#k_' + k2);
         if (!g('text').value.trim()) return toast('Give the key result a name', 'warn');
+        if (g('start').value && g('due').value && g('due').value < g('start').value) {
+          return toast('That key result is due before it starts.', 'warn');
+        }
         close({ text: g('text').value.trim(), target: +g('target').value || 0,
                 current: +g('current').value || 0, unit: g('unit').value.trim(),
-                due: g('due').value, invert: g('invert').checked });
+                start: g('start').value, due: g('due').value, invert: g('invert').checked });
       };
     },
   });
@@ -321,6 +327,8 @@ async function editObjMilestone(objId, msId) {
   const res = await formDlg(m ? 'Edit milestone' : `New milestone — ${o.title}`, [
     { k: 'name', label: 'Milestone', value: m?.name || '', required: true, span: 12,
       hint: 'A checkpoint with a date, not a task.' },
+    { k: 'start', label: 'Starts', type: 'date', value: m?.start || '', span: 6,
+      hint: 'Optional. With one, the timeline draws the stretch instead of a point.' },
     { k: 'date', label: 'Date', type: 'date', value: m?.date || o.due || today(), span: 6, required: true },
     { k: 'status', label: 'Status', type: 'select', value: m?.status || 'planned', span: 6,
       opts: MS_STATUS.map(x => ({ v: x.id, t: x.label })) },
@@ -328,6 +336,10 @@ async function editObjMilestone(objId, msId) {
       opts: [{ v: '', t: 'Unassigned' }, ...S.get().people.map(p => ({ v: p.id, t: p.name }))] },
   ], { ok: m ? 'Save' : 'Add', wide: true });
   if (!res) return false;
+  if (res.start && res.date && res.date < res.start) {
+    toast('That milestone ends before it starts.', 'warn');
+    return false;
+  }
 
   S.mutate(s => {
     const ob = S.byId(s.objectives, objId);
@@ -405,19 +417,21 @@ export default {
     const tlItems = list.flatMap(o => {
       const out = [];
       const st = o.status === 'done' ? 'done' : o.status === 'at-risk' || o.status === 'off-track' ? 'at-risk' : 'planned';
+      /* `from` is what turns a point into a span. Only the three things that
+         can carry a start supply it; the rest stay points. */
       if (o.due) {
-        out.push({ id: `od_${o.id}`, name: o.title, date: o.due, status: st,
+        out.push({ id: `od_${o.id}`, name: o.title, date: o.due, from: o.start || '', status: st,
                    goId: o.id, kind: 'objective', projectCode: o.quarter || '' });
       }
       for (const m of (o.milestones || [])) {
         if (!m.date) continue;
-        out.push({ id: m.id, name: m.name, date: m.date, status: m.status || 'planned',
+        out.push({ id: m.id, name: m.name, date: m.date, from: m.start || '', status: m.status || 'planned',
                    goId: o.id, kind: 'milestone', projectCode: o.title.slice(0, 22) });
       }
       for (const k of (o.keyResults || [])) {
         if (!k.due) continue;
         out.push({ id: k.id, name: k.text.length > 52 ? k.text.slice(0, 52) + '…' : k.text,
-                   date: k.due, status: krProgress(k) >= 100 ? 'done' : st,
+                   date: k.due, from: k.start || '', status: krProgress(k) >= 100 ? 'done' : st,
                    goId: o.id, kind: 'kr', projectCode: 'KR' });
       }
       return out;
@@ -450,6 +464,7 @@ export default {
         items: tlItems,
         pips: tlPips,
         key: 'okr',
+        clickHint: 'Click anything on the axis to jump to its objective',
         emptyMsg: 'Nothing dated in this window. Widen the range, or put a due date on an objective.',
       }) : `<div class="card" style="margin-bottom:14px"><div class="body">
         <div class="tiny mute" style="line-height:1.7">

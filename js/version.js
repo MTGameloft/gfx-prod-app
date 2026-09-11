@@ -15,9 +15,10 @@
    arrived.
    ========================================================================= */
 
-export const BUILD = '2026-09-11.4';
+export const BUILD = '2026-09-11.5';
 
-export const BUILD_NOTES = 'Objectives get a timeline and dates. An objective can carry a start and a due date, a key result can carry its own due date, and an objective now has dated milestones of its own — all three land on one axis above the cards, with today marked and the 3m/6m/12m and month/week/date controls every other timeline has. A click on any mark scrolls to the objective it belongs to. New task on an objective creates one already linked to it, with the project, division and due date carried over. The card itself was rebuilt for reading: the long why is behind a disclosure instead of a wall of muted text, and key results, milestones and linked tasks are three labelled blocks.';
+export const BUILD_NOTES = 'Start dates on milestones, key results and objectives — and anything with a start now draws as a span on the timeline rather than a point, clipped to the window. The translucent red box on every timeline is named in the legend at last: it is the next 14 days, not a milestone, and it was never clickable. The legend no longer claims "click to open its project" on the Objectives timeline, which shows objectives.';
+
 
 /**
  * Ask the server what build it is serving, bypassing the HTTP cache.

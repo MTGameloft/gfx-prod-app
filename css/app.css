@@ -1177,3 +1177,19 @@ table.tbl tfoot td {
   .okr-kr { grid-template-columns: 1fr; gap: 6px; }
   .okr-kr > .row { justify-content: flex-end; }
 }
+
+/* A dated thing that also has a start: the stretch it occupies, under the axis.
+   Sits below the milestone dots so a dot is never hidden by its own span. */
+.tl-span {
+  position: absolute; top: calc(var(--axis-y) - 3px); height: 7px; border-radius: 4px;
+  background: color-mix(in srgb, var(--span-col, var(--info)) 26%, transparent);
+  border: 1px solid color-mix(in srgb, var(--span-col, var(--info)) 45%, transparent);
+  pointer-events: none; z-index: 1;
+}
+/* The legend swatch for the "next 14 days" band, so the one translucent red
+   box on the axis is named rather than left to be guessed at. */
+.tl-key-band {
+  background: color-mix(in srgb, var(--risk) 14%, transparent) !important;
+  border: 1px solid color-mix(in srgb, var(--risk) 28%, transparent);
+  border-radius: 2px !important;
+}

@@ -496,6 +496,7 @@ export const SHEETS = {
       c('ProjectCode', '@parent', 'parent', { ref: 'projects', dv: 'Project' }),
       c('ID', 'id', 'text'),
       c('Name', 'name', 'text', { req: true }),
+      c('Start', 'start', 'date'),
       c('Date', 'date', 'date', { req: true }),
       c('Status', 'status', 'text', { enum: MS_STATUS, dv: 'MilestoneStat' }),
       c('Owner', 'owner', 'ref:people', { dv: 'Person' }),
@@ -607,6 +608,7 @@ export const SHEETS = {
       c('Objective', '@parent', 'parent', { ref: 'objectives', dv: 'Objective' }),
       c('ID', 'id', 'text'),
       c('Name', 'name', 'text', { req: true }),
+      c('Start', 'start', 'date'),
       c('Date', 'date', 'date', { req: true }),
       c('Status', 'status', 'text', { enum: MS_STATUS, dv: 'MilestoneStat' }),
       c('Owner', 'owner', 'ref:people', { dv: 'Person' }),
@@ -743,6 +745,7 @@ export const SHEETS = {
       c('Unit', 'unit'),
       /* A key result can have its own date — the objective's due is the outer
          bound, not every milestone inside it. */
+      c('Start', 'start', 'date'),
       c('Due', 'due', 'date'),
       c('Invert', 'invert', 'bool'),
     ],

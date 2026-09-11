@@ -94,7 +94,13 @@ const statusColour = (m, late) =>
  * @param {Array} pips   [{ date, overdue, title }] — task due dates
  */
 export function timelineHTML(items, { range = '6m', pips = [], scaleKey = 'dashboard',
-                                      emptyMsg = 'Nothing in this window.' } = {}) {
+                                      emptyMsg = 'Nothing in this window.',
+                                      /* What a click does, in words. It used to be hard-coded to
+                                         "open its project", which is a lie on any axis that is not
+                                         showing projects — the Objectives timeline said it while
+                                         carrying nothing but objectives, which is exactly the sort
+                                         of caption that makes a reader distrust the whole panel. */
+                                      clickHint = 'Click a milestone to open its project' } = {}) {
   const b = bounds(range);
   const td = today();
   const inWindow = items.filter(m => m.date >= b.from && m.date <= b.to);
@@ -125,6 +131,25 @@ export function timelineHTML(items, { range = '6m', pips = [], scaleKey = 'dashb
     const x = pct(p.date, b);
     if (x < 0 || x > 100) return '';
     return `<span class="tl-pip ${p.overdue ? 'over' : ''}" style="left:${x.toFixed(3)}%" title="${esc(p.title)} · ${esc(fmtDate(p.date))}"></span>`;
+  }).join('');
+
+  /*
+   * A span for anything that has a start.
+   *
+   * Drawn under the axis as a bar from `from` to `date`, so a milestone with a
+   * start reads as the stretch of time it occupies rather than as a point that
+   * happens to have a date in a tooltip. Clipped to the window, because an
+   * objective running from July to next April is mostly outside a 3-month view
+   * and a bar starting off-screen must not be drawn starting at zero.
+   */
+  const spans = inWindow.filter(m => m.from && m.from < m.date).map(m => {
+    const a = Math.max(0, pct(m.from, b));
+    const z = Math.min(100, pct(m.date, b));
+    if (z <= a) return '';
+    const late = m.status !== 'done' && m.date < td;
+    const col = m.colour || statusColour(m, late);
+    return `<span class="tl-span" style="left:${a.toFixed(3)}%;width:${(z - a).toFixed(3)}%;--span-col:${col}"
+              title="${esc(m.name)} — ${esc(fmtDate(m.from, 'long'))} → ${esc(fmtDate(m.date, 'long'))}"></span>`;
   }).join('');
 
   const marks = inWindow.map(m => {
@@ -158,6 +183,7 @@ export function timelineHTML(items, { range = '6m', pips = [], scaleKey = 'dashb
           ${grid}
           ${bandB > bandA ? `<span class="tl-band" style="left:${bandA.toFixed(3)}%;width:${(bandB - bandA).toFixed(3)}%" title="Next ${ALERT_DAYS} days"></span>` : ''}
           <span class="tl-axis"></span>
+          ${spans}
           ${pipHtml}
           ${nowPct >= 0 && nowPct <= 100 ? `<span class="tl-now" style="left:${nowPct.toFixed(3)}%"><b>Today</b></span>` : ''}
           ${marks}
@@ -171,8 +197,9 @@ export function timelineHTML(items, { range = '6m', pips = [], scaleKey = 'dashb
       <span><i style="background:var(--risk)"></i>Late</span>
       <span><i style="background:var(--ok)"></i>Done</span>
       ${pips.length ? '<span><i style="background:var(--text-mute)"></i>Task due date</span>' : ''}
+      ${bandB > bandA ? `<span><i class="tl-key-band"></i>Next ${ALERT_DAYS} days</span>` : ''}
       ${show.week ? '<span>W## = ISO week</span>' : ''}
-      <span style="margin-left:auto">Click a milestone to open its project</span>
+      <span style="margin-left:auto">${esc(clickHint)}</span>
     </div>
   </div>`;
 }
@@ -238,7 +265,8 @@ export function milestonePanel(o) {
       ${o.extra || ''}</header>
     <div class="body">
       ${timelineHTML(o.items || [], { range, pips: o.pips || [], scaleKey: key,
-                                      emptyMsg: o.emptyMsg || 'Nothing in this window.' })}
+                                      emptyMsg: o.emptyMsg || 'Nothing in this window.',
+                                      ...(o.clickHint ? { clickHint: o.clickHint } : {}) })}
     </div>
   </section>`;
 }

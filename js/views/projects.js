@@ -36,7 +36,7 @@ import { milestonePanel, wireMilestones, rangeOf, bounds as tlBounds } from '../
  */
 const msItems = list => list.flatMap(p => (p.milestones || [])
   .filter(m => m.date)
-  .map(m => ({ id: m.id, name: m.name, date: m.date, status: m.status,
+  .map(m => ({ id: m.id, name: m.name, date: m.date, from: m.start || '', status: m.status,
                projectId: p.id, projectCode: p.code, projectName: p.name })));
 
 /** Open task due dates, as pips along the axis. */
@@ -774,6 +774,8 @@ async function editMilestone(pid, mid) {
   const m = mid ? p.milestones.find(x => x.id === mid) : null;
   const res = await formDlg(m ? 'Edit milestone' : 'New milestone', [
     { k: 'name', label: 'Milestone', value: m?.name || '', required: true, span: 12 },
+    { k: 'start', label: 'Starts', type: 'date', value: m?.start || '', span: 6,
+      hint: 'Optional. With one, the timeline draws the stretch rather than a point.' },
     { k: 'date', label: 'Date', type: 'date', value: m?.date || today(), span: 6, required: true },
     { k: 'status', label: 'Status', type: 'select', value: m?.status || 'planned', span: 6, opts: MS_STATUS.map(x => ({ v: x.id, t: x.label })) },
     { k: 'owner', label: 'Owner', type: 'select', value: m?.owner || '', span: 12,
