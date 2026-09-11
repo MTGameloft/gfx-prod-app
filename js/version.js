@@ -15,7 +15,7 @@
    arrived.
    ========================================================================= */
 
-export const BUILD = '2026-09-11.2';
+export const BUILD = '2026-09-11.3';
 
 export const BUILD_NOTES = 'Every money figure in the sample data is now zero — salaries, project budgets, vendor rates, budget lines and agreed batch costs, on top of the rate card. Invented numbers were not enough: published beside a real employer they read as that employer\u2019s numbers, and this repository is public. Zero states nothing, nothing breaks at zero, and your own figures live in your browser and your backups.';
 

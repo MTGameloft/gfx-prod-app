@@ -420,7 +420,10 @@ export function barChart({ labels, series, height = 180, money = false, sym = '$
   const w = SVG_W, h = height;
   const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
   const totals = labels.map((_, i) => stacked ? sum(series, s => s.values[i] || 0) : Math.max(...series.map(s => s.values[i] || 0)));
-  const max = Math.max(1, ...totals) * 1.12;
+  /* See lineChart: the 1 is a divisor guard, never a label. */
+  const peak = Math.max(0, ...totals);
+  const flat = peak <= 0;
+  const max = flat ? 1 : peak * 1.12;
   const y = v => pad.t + ih - (v / max) * ih;
   const bw = iw / labels.length;
   const inner = bw * 0.62;
@@ -429,8 +432,11 @@ export function barChart({ labels, series, height = 180, money = false, sym = '$
   let g = '';
   for (let i = 0; i <= 4; i++) {
     const v = max * i / 4;
+    /* Gridlines still frame the plot when it is flat; only the baseline is
+       labelled, because four more zeroes up the axis say nothing. */
+    const lab = flat ? (i === 0 ? fmt(0) : "") : fmt(v);
     g += `<line class="gridline" x1="${pad.l}" x2="${w - pad.r}" y1="${y(v)}" y2="${y(v)}"/>
-          <text x="${pad.l - 6}" y="${y(v) + 3.5}" text-anchor="end">${fmt(v)}</text>`;
+          <text x="${pad.l - 6}" y="${y(v) + 3.5}" text-anchor="end">${lab}</text>`;
   }
   let bars = '';
   labels.forEach((lb, i) => {
@@ -462,7 +468,16 @@ export function lineChart({ labels, series, height = 190, money = true, sym = '$
   const w = SVG_W, h = height;
   const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
   const all = series.flatMap(s => s.values.filter(v => v != null));
-  const max = Math.max(1, ...all) * 1.12;
+  /*
+   * `Math.max(1, …)` is the right guard for the DIVISOR and the wrong number
+   * for the LABELS. With every value at zero it made the axis read
+   * $0 $0 $1 $1 $1 — an invented scale of one dollar on a chart with no data.
+   * So the 1 stays where it belongs, keeping `y()` finite, and a flat series
+   * labels only the baseline.
+   */
+  const peak = Math.max(0, ...all);
+  const flat = peak <= 0;
+  const max = flat ? 1 : peak * 1.12;
   const x = i => pad.l + (labels.length === 1 ? iw / 2 : (i / (labels.length - 1)) * iw);
   const y = v => pad.t + ih - (v / max) * ih;
   const fmt = v => money ? fmtMoney(v, sym) : fmtNum(v);
@@ -470,8 +485,11 @@ export function lineChart({ labels, series, height = 190, money = true, sym = '$
   let g = '';
   for (let i = 0; i <= 4; i++) {
     const v = max * i / 4;
+    /* Gridlines still frame the plot when it is flat; only the baseline is
+       labelled, because four more zeroes up the axis say nothing. */
+    const lab = flat ? (i === 0 ? fmt(0) : "") : fmt(v);
     g += `<line class="gridline" x1="${pad.l}" x2="${w - pad.r}" y1="${y(v)}" y2="${y(v)}"/>
-          <text x="${pad.l - 6}" y="${y(v) + 3.5}" text-anchor="end">${fmt(v)}</text>`;
+          <text x="${pad.l - 6}" y="${y(v) + 3.5}" text-anchor="end">${lab}</text>`;
   }
   let paths = '';
   series.forEach(s => {
