@@ -109,6 +109,21 @@ export function timelineHTML(items, { range = '6m', pips = [], scaleKey = 'dashb
   const bandA = Math.max(0, nowPct);
   const bandB = Math.min(100, pct(addDays(td, ALERT_DAYS), b));
 
+  /*
+   * The "next 14 days" band only when something is actually in it.
+   *
+   * It used to be drawn whenever that fortnight was visible, which is almost
+   * always — so a timeline whose nearest item was three weeks out still got a
+   * translucent red box over an empty stretch of calendar. Highlighting a
+   * period in which nothing happens says nothing, and a red box that means
+   * nothing reads as a bug: it was reported as one, twice.
+   *
+   * Now it marks the run-up to real work. No item due inside it, no band.
+   */
+  const alertEnd = addDays(td, ALERT_DAYS);
+  const dueSoon = inWindow.filter(m => m.status !== 'done' && m.date >= td && m.date <= alertEnd);
+  const showBand = bandB > bandA && dueSoon.length > 0;
+
   const weeks = weekTicks(b);
   const months = monthTicks(b);
 
@@ -181,7 +196,7 @@ export function timelineHTML(items, { range = '6m', pips = [], scaleKey = 'dashb
       <div class="tl-inner" style="${minW ? `min-width:${minW}px` : ''}">
         <div class="tl-track" data-tl-track>
           ${grid}
-          ${bandB > bandA ? `<span class="tl-band" style="left:${bandA.toFixed(3)}%;width:${(bandB - bandA).toFixed(3)}%" title="Next ${ALERT_DAYS} days"></span>` : ''}
+          ${showBand ? `<span class="tl-band" style="left:${bandA.toFixed(3)}%;width:${(bandB - bandA).toFixed(3)}%" title="${dueSoon.length} due in the next ${ALERT_DAYS} days: ${esc(dueSoon.map(x => x.name).join(", "))}"></span>` : ''}
           <span class="tl-axis"></span>
           ${spans}
           ${pipHtml}
@@ -197,7 +212,7 @@ export function timelineHTML(items, { range = '6m', pips = [], scaleKey = 'dashb
       <span><i style="background:var(--risk)"></i>Late</span>
       <span><i style="background:var(--ok)"></i>Done</span>
       ${pips.length ? '<span><i style="background:var(--text-mute)"></i>Task due date</span>' : ''}
-      ${bandB > bandA ? `<span><i class="tl-key-band"></i>Next ${ALERT_DAYS} days</span>` : ''}
+      ${showBand ? `<span><i class="tl-key-band"></i>Due in the next ${ALERT_DAYS} days (${dueSoon.length})</span>` : ''}
       ${show.week ? '<span>W## = ISO week</span>' : ''}
       <span style="margin-left:auto">${esc(clickHint)}</span>
     </div>

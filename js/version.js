@@ -15,9 +15,10 @@
    arrived.
    ========================================================================= */
 
-export const BUILD = '2026-09-11.5';
+export const BUILD = '2026-09-11.6';
 
-export const BUILD_NOTES = 'Start dates on milestones, key results and objectives — and anything with a start now draws as a span on the timeline rather than a point, clipped to the window. The translucent red box on every timeline is named in the legend at last: it is the next 14 days, not a milestone, and it was never clickable. The legend no longer claims "click to open its project" on the Objectives timeline, which shows objectives.';
+export const BUILD_NOTES = 'The translucent red box on the timeline is gone unless it means something. It marks the next 14 days, and it used to be drawn whenever that fortnight was on screen — so a timeline whose nearest item was a month out still got a red box over an empty stretch of calendar, which reads as a bug because it is saying nothing. It now appears only when something is actually due inside it, names those items in its tooltip, and counts them in the legend.';
+
 
 
 /**
