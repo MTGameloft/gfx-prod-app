@@ -165,7 +165,7 @@ export const WORKBOOKS = [
     blurb: 'Projects, their milestones, the month-by-month budget planned against actual, the rate card, the public-holiday calendar, and the GFX work-breakdown catalogue with its estimates.' },
 
   { id: 'work', file: '04_Tasks_Objectives.xlsx', title: 'Tasks & Objectives',
-    sheets: ['Tasks', 'Objectives', 'KeyResults', 'JiraProjects', 'JiraImports'],
+    sheets: ['Tasks', 'Objectives', 'KeyResults', 'ObjectiveMilestones', 'JiraProjects', 'JiraImports'],
     blurb: 'The task board, the quarterly objectives with their key results, and a log of every task filed into Jira.' },
 ];
 
@@ -580,16 +580,36 @@ export const SHEETS = {
 
   Objectives: {
     coll: 'objectives', match: ['title'], label: 'title',
-    note: 'Quarterly objectives. Key results live on their own sheet.',
+    note: 'Quarterly objectives. Key results and milestones live on their own sheets. Start and Due are optional: the quarter is the coarse bucket, the dates are what the timeline draws.',
     cols: [
       c('ID', 'id', 'id'),
       c('Title', 'title', 'text', { req: true }),
       c('Quarter', 'quarter'),
+      /* The quarter alone cannot be drawn. A due date can, and an objective
+         that runs across quarters — a performance period through next April —
+         needs to say so somewhere the timeline can read. */
+      c('Start', 'start', 'date'),
+      c('Due', 'due', 'date'),
       c('Owner', 'owner', 'ref:people', { dv: 'Person' }),
       c('Project', 'project', 'ref:projects', { dv: 'Project' }),
       c('Division', 'division', 'ref:divisions', { dv: 'Division' }),
       c('Status', 'status', 'text', { enum: O_STATUS, dv: 'ObjectiveStat' }),
       c('Why', 'why'),
+    ],
+  },
+
+  /* Dated checkpoints under an objective — the same shape as a project's
+     milestones, so the shared timeline draws both without a special case. */
+  ObjectiveMilestones: {
+    child: { parent: 'objectives', field: 'milestones', by: 'Objective', kind: 'array', byRef: 'objectives' },
+    note: 'Dated checkpoints under an objective. Importing replaces the milestone list for every objective that appears here.',
+    cols: [
+      c('Objective', '@parent', 'parent', { ref: 'objectives', dv: 'Objective' }),
+      c('ID', 'id', 'text'),
+      c('Name', 'name', 'text', { req: true }),
+      c('Date', 'date', 'date', { req: true }),
+      c('Status', 'status', 'text', { enum: MS_STATUS, dv: 'MilestoneStat' }),
+      c('Owner', 'owner', 'ref:people', { dv: 'Person' }),
     ],
   },
 
@@ -721,6 +741,9 @@ export const SHEETS = {
       c('Target', 'target', 'num'),
       c('Current', 'current', 'num'),
       c('Unit', 'unit'),
+      /* A key result can have its own date — the objective's due is the outer
+         bound, not every milestone inside it. */
+      c('Due', 'due', 'date'),
       c('Invert', 'invert', 'bool'),
     ],
   },

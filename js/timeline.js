@@ -134,8 +134,12 @@ export function timelineHTML(items, { range = '6m', pips = [], scaleKey = 'dashb
     const wk = 'W' + isoWeek(toDate(m.date));
     const meta = [fmtDate(m.date), wk, m.projectCode].filter(Boolean).join(' · ');
     const state = m.status === 'done' ? 'Done' : late ? 'LATE' : m.status === 'at-risk' ? 'At risk' : 'Planned';
+    /* `goId` is whatever the caller wants a click to resolve to when the mark
+       is not a project's — an objective, say. `wireMilestones` hands it to an
+       `onMark` callback so this module stays ignorant of what it points at. */
     return `<div class="tl-ms" style="left:${x.toFixed(3)}%" data-pct="${x.toFixed(3)}"
               data-ms="${esc(m.id)}" data-project="${esc(m.projectId || '')}"
+              data-go="${esc(m.goId || '')}" data-kind="${esc(m.kind || '')}"
               title="${esc(m.name)} — ${esc(fmtDate(m.date, 'long'))} · ${esc(wk)} · ${esc(state)}${m.projectName ? ' · ' + esc(m.projectName) : ''}">
       <span class="tl-stem"></span>
       <span class="tl-dot" style="background:${col}"></span>
@@ -243,7 +247,7 @@ export function milestonePanel(o) {
  * Wire one or more panels in a host: the range buttons, the milestone click,
  * and the measured layout. Returns the teardown for the view's cleanup.
  */
-export function wireMilestones(host, ctx) {
+export function wireMilestones(host, ctx, { onMark = null } = {}) {
   host.addEventListener('click', e => {
     const rb = e.target.closest('[data-act="tl-range"]');
     if (rb) {
@@ -253,7 +257,14 @@ export function wireMilestones(host, ctx) {
       return;
     }
     const ms = e.target.closest('.tl-ms');
-    if (ms?.dataset.project) ctx.go('projects', ms.dataset.project);
+    if (!ms) return;
+    /* A caller with its own notion of what a mark points at gets first refusal;
+       everything else keeps the original behaviour of opening the project. */
+    if (onMark && ms.dataset.go) {
+      onMark(ms.dataset.go, ms.dataset.ms, ms.dataset.kind);
+      return;
+    }
+    if (ms.dataset.project) ctx.go('projects', ms.dataset.project);
   });
   return observeTimeline(host);
 }

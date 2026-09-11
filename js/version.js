@@ -15,10 +15,9 @@
    arrived.
    ========================================================================= */
 
-export const BUILD = '2026-09-11.3';
+export const BUILD = '2026-09-11.4';
 
-export const BUILD_NOTES = 'Every money figure in the sample data is now zero — salaries, project budgets, vendor rates, budget lines and agreed batch costs, on top of the rate card. Invented numbers were not enough: published beside a real employer they read as that employer\u2019s numbers, and this repository is public. Zero states nothing, nothing breaks at zero, and your own figures live in your browser and your backups.';
-
+export const BUILD_NOTES = 'Objectives get a timeline and dates. An objective can carry a start and a due date, a key result can carry its own due date, and an objective now has dated milestones of its own — all three land on one axis above the cards, with today marked and the 3m/6m/12m and month/week/date controls every other timeline has. A click on any mark scrolls to the objective it belongs to. New task on an objective creates one already linked to it, with the project, division and due date carried over. The card itself was rebuilt for reading: the long why is behind a disclosure instead of a wall of muted text, and key results, milestones and linked tasks are three labelled blocks.';
 
 /**
  * Ask the server what build it is serving, bypassing the HTTP cache.

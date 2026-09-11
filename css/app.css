@@ -1132,3 +1132,48 @@ table.tbl tfoot td {
   border-top: 1px solid var(--line); border-bottom: 0;
   background: var(--bg-sunken); font-size: 12.5px;
 }
+
+/* ---------- objectives ---------------------------------------------------- */
+/*
+   The OKR card was one undifferentiated stack: key results, owner, check-ins
+   and buttons all at the same weight, with the `why` paragraph inline as muted
+   body text. These rules give it three labelled blocks and a readable key
+   result row, and keep the card legible at the 480px the grid now uses.
+*/
+.okr-qhead {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 18px 2px 9px; border-bottom: 1px solid var(--line); margin-bottom: 12px;
+}
+.okr-qhead h3 { font-size: 13px; letter-spacing: .3px; text-transform: uppercase; color: var(--text-dim); margin: 0; }
+
+.okr .okr-sec { margin-top: 14px; }
+.okr .okr-sec-h {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 7px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: .5px;
+  text-transform: uppercase; color: var(--text-dim);
+}
+.okr .okr-sec-h span { flex: 1; }
+.okr .okr-sec-h .btn { font-size: 11px; }
+
+.okr-krs { display: flex; flex-direction: column; }
+.okr-krs > * { padding: 7px 0; border-top: 1px solid var(--line); }
+.okr-krs > *:first-child { border-top: 0; padding-top: 2px; }
+
+/* Key result: text and bar take the space, the numbers stay put on the right. */
+.okr-kr {
+  display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center;
+}
+.okr-kr-pct {
+  width: 40px; text-align: right; font-weight: 650; font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.okr-why summary { font-weight: 600; }
+.okr-why[open] summary { margin-bottom: 2px; }
+
+/* A click on a timeline mark scrolls here; the flash says which card. */
+.okr-flash { outline: 2px solid var(--accent); outline-offset: 2px; transition: outline-color .9s ease; }
+
+@media (max-width: 560px) {
+  .okr-kr { grid-template-columns: 1fr; gap: 6px; }
+  .okr-kr > .row { justify-content: flex-end; }
+}
