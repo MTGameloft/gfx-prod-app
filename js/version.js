@@ -15,9 +15,9 @@
    arrived.
    ========================================================================= */
 
-export const BUILD = '2026-09-14.1';
+export const BUILD = '2026-09-14.2';
 
-export const BUILD_NOTES = 'The Tasks board is now a mirror of Jira. tools\\jira-pull.ps1 fetches your project and writes every vocabulary with it — statuses, priorities, sprints, components, versions, issue types — so the lanes are Jira’s eight statuses rather than this app’s six, and the columns carry Jira’s own field names: Summary, not Task; Original estimate, not Est. The board groups by Status, Sprint, Epic, Assignee or Component, and the list indents sub-tasks under their parent. Settings → Jira mirror holds the Master Filter: tick the components and labels worth seeing, and everything else stays out of both the fetch and the board.';
+export const BUILD_NOTES = 'The Master Filter now lists everything you can choose from, rather than only what you had already chosen. Unticking a component used to remove it from the list it came from, so it vanished with no way to tick it back; the list is now a catalogue that only ever grows. Labels come from a scan of every issue in the project instead of only the ones already imported — 43 rather than 22 here — which is what makes it possible to widen the filter to a label you do not yet have, not only narrow it.';
 
 
 

@@ -69,11 +69,55 @@ export function filter() {
   };
 }
 
+/**
+ * Change the filter — and first, remember everything currently on offer.
+ *
+ * A tick list whose only source is the ticked set eats its own entries: untick
+ * a component and it vanishes, with no way to tick it back. So the full list
+ * as it stands is folded into the catalogue BEFORE the change is applied. The
+ * catalogue only ever grows, which is what makes unticking safe without
+ * hard-coding any name as a fallback.
+ */
 export function setFilter(patch) {
+  const comps = allComponents();
+  const labs = allLabels();
   S.mutate(s => {
+    s.jira = s.jira || {};
+    s.jira.catalogue = { components: comps, labels: labs };
     s.settings.jiraFilter = { ...filter(), ...patch };
   }, { label: 'Jira filter' });
 }
+
+/** Everything ever offered, from any pull. Grows, never shrinks. */
+export const catalogue = () => {
+  const c = S.get().jira?.catalogue || {};
+  return {
+    components: Array.isArray(c.components) ? c.components : [],
+    labels: Array.isArray(c.labels) ? c.labels : [],
+  };
+};
+
+const union = (...lists) => [...new Set(lists.flat().filter(Boolean))];
+
+/**
+ * Every component the tick list should show: what the project has, what the
+ * catalogue remembers, and whatever is ticked right now — so a filter naming
+ * something the current pull did not return still shows that thing.
+ */
+export const allComponents = () =>
+  union(catalogue().components, components().map(c => c.name), filter().components).sort();
+
+/**
+ * Every label, same rule.
+ *
+ * `mirror().catalogue.labels` is the project-wide set the pull collects
+ * separately; `mirror().labels` is only what the filtered issues happened to
+ * carry. Showing the latter alone would mean you could never widen the filter
+ * to a label that is currently filtered out — the list would only ever offer
+ * what you already have.
+ */
+export const allLabels = () =>
+  union(catalogue().labels, mirror()?.catalogue?.labels || [], labels(), filter().labels).sort();
 
 /* ---------- vocabularies ------------------------------------------------- */
 
@@ -317,7 +361,19 @@ export function importMirror(text, { keepLocal = true } = {}) {
       project: m.project, components: m.components || [], versions: m.versions || [],
       issueTypes: m.issueTypes || [], statuses: m.statuses || [],
       priorities: m.priorities || [], sprints: all, labels: m.labels || [],
+      catalogue: m.catalogue || null,
       fields: m.fields || {}, counts: { pulled: (m.issues || []).length, kept: kept.length },
+    };
+
+    /* Fold this pull into the standing catalogue rather than replacing it: a
+       narrow pull must not shrink the list of things you are allowed to widen
+       the filter back to. */
+    const prev = s.jira.catalogue || {};
+    s.jira.catalogue = {
+      components: [...new Set([...(prev.components || []),
+                               ...(m.components || []).map(c => c.name)])].filter(Boolean).sort(),
+      labels: [...new Set([...(prev.labels || []),
+                           ...(m.catalogue?.labels || []), ...(m.labels || [])])].filter(Boolean).sort(),
     };
 
     const local = keepLocal ? s.tasks.filter(t => !t.jiraKey && t.source !== 'jira') : [];

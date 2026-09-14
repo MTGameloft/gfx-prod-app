@@ -406,11 +406,12 @@ function tickList(act, all, chosen, { empty = 'Nothing to choose from yet.' } = 
 function masterFilterCard() {
   const f = JM.filter();
   const m = JM.mirror();
-  const comps = JM.components().map(c => c.name);
-  const labs = JM.labels();
-  // before the first pull, still show what is ticked so it is not a blank card
-  const compList = comps.length ? comps : f.components;
-  const labList = labs.length ? labs : f.labels;
+  /* The catalogue, not the ticked set. Sourcing the list from what is ticked
+     makes it eat itself — untick a component and it disappears with no way
+     back. `allComponents`/`allLabels` union everything ever offered, so a box
+     can be unticked and re-ticked freely. */
+  const compList = JM.allComponents();
+  const labList = JM.allLabels();
 
   return h`
   <section class="card">
@@ -419,19 +420,20 @@ function masterFilterCard() {
       <span class="chip">${String(f.components.length || 'all')} component${f.components.length === 1 ? '' : 's'}</span>
     </header>
     <div class="body">
-      <p class="tiny">Only ticked work is fetched and shown.${comps.length
-        ? ` This project has ${comps.length} components` : ' A project carries far more components than one team works on'}
+      <p class="tiny">Only ticked work is fetched and shown.${compList.length
+        ? ` This project has ${compList.length} components` : ' A project carries far more components than one team works on'}
         — without this the board fills with audio, development and design work that is
         nothing to do with yours.</p>
 
-      <h4 class="tiny" style="margin:14px 0 6px;text-transform:uppercase;letter-spacing:.04em">Components</h4>
+      <h4 class="tiny" style="margin:14px 0 6px;text-transform:uppercase;letter-spacing:.04em">
+        Components <span class="mute" style="text-transform:none;letter-spacing:0">— ${f.components.length || 'none'} of ${compList.length} ticked${f.components.length ? '' : ', so every component is included'}</span></h4>
       ${raw(tickList('mf-comp', compList, f.components,
         { empty: 'Run a pull first — the component list comes from Jira.' }))}
 
       <h4 class="tiny" style="margin:16px 0 6px;text-transform:uppercase;letter-spacing:.04em">
-        Labels <span class="mute" style="text-transform:none;letter-spacing:0">— none ticked means any label</span></h4>
+        Labels <span class="mute" style="text-transform:none;letter-spacing:0">— ${f.labels.length || 'none'} of ${labList.length} ticked${f.labels.length ? '' : ', so any label is included'}</span></h4>
       ${raw(tickList('mf-label', labList, f.labels,
-        { empty: 'Run a pull first — the label list comes from Jira.' }))}
+        { empty: 'Run a pull first — the label list comes from every issue in the project.' }))}
 
       <label class="tiny" style="display:flex;align-items:center;gap:8px;margin:16px 0 0;cursor:pointer">
         <input type="checkbox" data-act="mf-done"${f.includeDone ? ' checked' : ''}>
@@ -1225,7 +1227,7 @@ export default {
       },
       'mf-done': () => { JM.setFilter({ includeDone: !JM.filter().includeDone }); ctx.rerender(); },
       'mf-all': () => {
-        JM.setFilter({ components: JM.components().map(c => c.name), labels: [] });
+        JM.setFilter({ components: JM.allComponents(), labels: [] });
         toast('Every component ticked, labels left open', 'ok'); ctx.rerender();
       },
       'mf-none': () => {
