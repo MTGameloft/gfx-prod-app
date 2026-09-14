@@ -15,9 +15,9 @@
    arrived.
    ========================================================================= */
 
-export const BUILD = '2026-09-11.6';
+export const BUILD = '2026-09-14.1';
 
-export const BUILD_NOTES = 'The translucent red box on the timeline is gone unless it means something. It marks the next 14 days, and it used to be drawn whenever that fortnight was on screen — so a timeline whose nearest item was a month out still got a red box over an empty stretch of calendar, which reads as a bug because it is saying nothing. It now appears only when something is actually due inside it, names those items in its tooltip, and counts them in the legend.';
+export const BUILD_NOTES = 'The Tasks board is now a mirror of Jira. tools\\jira-pull.ps1 fetches your project and writes every vocabulary with it — statuses, priorities, sprints, components, versions, issue types — so the lanes are Jira’s eight statuses rather than this app’s six, and the columns carry Jira’s own field names: Summary, not Task; Original estimate, not Est. The board groups by Status, Sprint, Epic, Assignee or Component, and the list indents sub-tasks under their parent. Settings → Jira mirror holds the Master Filter: tick the components and labels worth seeing, and everything else stays out of both the fetch and the board.';
 
 
 

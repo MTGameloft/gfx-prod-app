@@ -505,6 +505,24 @@ export function seed() {
     },
 
     settings: {
+      /*
+       * The Master Filter for the Jira mirror.
+       *
+       * A real project carries far more components than one team works on; without
+       * a restriction the board fills with AUDIO, DEVELOPMENT and GAME DESIGN
+       * work that has nothing to do with GFX. Ticked components and labels are
+       * applied twice — when the pull script fetches, and again on import — so
+       * changing a tick takes effect immediately rather than at the next pull.
+       *
+       * An empty `labels` list means "any label"; labels refine, they do not
+       * select. `components` defaults to the two GFX ones so a fresh install
+       * shows something sensible instead of everything.
+       */
+      jiraFilter: {
+        components: ['GFX', 'GFX Prod'],
+        labels: [],
+        includeDone: false,
+      },
       graph: {
         clientId: '', tenantId: 'common', enabled: false, siteUrl: '', autoConnect: false,
         // Start with the least that works: your own OneDrive, for the backup.
@@ -635,6 +653,12 @@ export function seed() {
      * JiraProjects sheet, so they survive a browser wipe.
      */
     jiraProjects: [],
+
+    /* The pulled Jira vocabularies — statuses, priorities, sprints,
+       components, versions, issue types, labels. Null until the first
+       "Refresh from Jira". Never seeded with sample data: an invented status
+       list would be indistinguishable from a real one on screen. */
+    jira: { mirror: null },
 
     /*
      * The rungs, with NO figures against them — every one is 0 on purpose.

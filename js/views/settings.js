@@ -21,6 +21,7 @@ import * as BR from '../bridge.js';
 import { BUILD, BUILD_NOTES, checkForUpdate, hardReload } from '../version.js';
 import { saveBackupFile, lastExportAt, exportIsStale } from '../backupformat.js';
 import { divisionLabel, jiraProjects } from '../jira.js';
+import * as JM from '../jiramirror.js';
 
 const ACCENTS = ['#6264A7', '#0F6CBD', '#C4314B', '#107C10', '#B146C2', '#C77405', '#0E7A70', '#4F52B2', '#2B2B40'];
 
@@ -37,6 +38,7 @@ const TABS = [
   { id: 'you',      label: 'You',           sub: 'how the app addresses you, and how it looks' },
   { id: 'org',      label: 'Organisation',  sub: 'divisions, rates, links and working assumptions' },
   { id: 'connect',  label: 'Integrations',  sub: 'Microsoft 365 and the local bridge' },
+  { id: 'jira',     label: 'Jira mirror',   sub: 'the Master Filter, and what the last pull brought in' },
   { id: 'backup',   label: 'Backup & data', sub: 'where copies go, and what to do with them' },
   { id: 'security', label: 'Security',      sub: 'password protection for this browser profile' },
   { id: 'about',    label: 'About',         sub: 'build, storage and what changed' },
@@ -372,6 +374,123 @@ function graphCard() {
         <div>Delegated permissions only: the app can reach exactly the files you can reach, and nothing runs
         when you are not signed in. Most tenants need an administrator to grant consent once for
         <span class="mono">Sites.ReadWrite.All</span> — see <span class="mono">docs/AZURE-AD.md</span>.</div></div>
+    </div>
+  </section>`;
+}
+
+/* ---------- Jira mirror -------------------------------------------------- */
+
+/**
+ * One tick list. Rendered as a wrapping grid of checkboxes rather than a
+ * multi-select, because the whole point is to see at a glance what is in and
+ * what is out — a collapsed `<select multiple>` shows neither.
+ */
+function tickList(act, all, chosen, { empty = 'Nothing to choose from yet.' } = {}) {
+  if (!all.length) return `<p class="tiny mute">${esc(empty)}</p>`;
+  return `<div class="row wrap" style="gap:6px 14px">${all.map(name => {
+    const on = chosen.includes(name);
+    return `<label class="tiny" style="display:flex;align-items:center;gap:6px;cursor:pointer">
+      <input type="checkbox" data-act="${act}" data-v="${esc(name)}"${on ? ' checked' : ''}>
+      <span${on ? '' : ' class="mute"'}>${esc(name)}</span></label>`;
+  }).join('')}</div>`;
+}
+
+/**
+ * The Master Filter.
+ *
+ * Components and labels come from the last pull, so this list is whatever
+ * the project actually has rather than whatever was true when this was written.
+ * Before the first pull there is nothing to list, so the card says so and
+ * still shows the default component ticks.
+ */
+function masterFilterCard() {
+  const f = JM.filter();
+  const m = JM.mirror();
+  const comps = JM.components().map(c => c.name);
+  const labs = JM.labels();
+  // before the first pull, still show what is ticked so it is not a blank card
+  const compList = comps.length ? comps : f.components;
+  const labList = labs.length ? labs : f.labels;
+
+  return h`
+  <section class="card">
+    <header>${icon('target')}<h3>Master Filter</h3>
+      <div class="spacer" style="flex:1"></div>
+      <span class="chip">${String(f.components.length || 'all')} component${f.components.length === 1 ? '' : 's'}</span>
+    </header>
+    <div class="body">
+      <p class="tiny">Only ticked work is fetched and shown.${comps.length
+        ? ` This project has ${comps.length} components` : ' A project carries far more components than one team works on'}
+        — without this the board fills with audio, development and design work that is
+        nothing to do with yours.</p>
+
+      <h4 class="tiny" style="margin:14px 0 6px;text-transform:uppercase;letter-spacing:.04em">Components</h4>
+      ${raw(tickList('mf-comp', compList, f.components,
+        { empty: 'Run a pull first — the component list comes from Jira.' }))}
+
+      <h4 class="tiny" style="margin:16px 0 6px;text-transform:uppercase;letter-spacing:.04em">
+        Labels <span class="mute" style="text-transform:none;letter-spacing:0">— none ticked means any label</span></h4>
+      ${raw(tickList('mf-label', labList, f.labels,
+        { empty: 'Run a pull first — the label list comes from Jira.' }))}
+
+      <label class="tiny" style="display:flex;align-items:center;gap:8px;margin:16px 0 0;cursor:pointer">
+        <input type="checkbox" data-act="mf-done"${f.includeDone ? ' checked' : ''}>
+        <span>Include finished work (Done, Cancelled, Approved by Licensor)</span></label>
+
+      <h4 class="tiny" style="margin:16px 0 6px;text-transform:uppercase;letter-spacing:.04em">Resulting query</h4>
+      <pre class="tiny" style="white-space:pre-wrap;word-break:break-word;background:var(--bg2,#f6f6f8);
+        padding:8px 10px;border-radius:6px;margin:0">${JM.filterJql()}</pre>
+
+      <div class="row wrap" style="margin-top:14px;gap:8px">
+        <button class="btn sm" data-act="mf-save">${icon('save')}Save filter file</button>
+        <button class="btn sm" data-act="mf-all">Tick all</button>
+        <button class="btn sm" data-act="mf-none">Untick all</button>
+      </div>
+      <p class="tiny mute" style="margin-top:8px">The filter file goes next to the mirror so
+        <code>jira-pull.ps1</code> narrows the fetch itself. Without it the pull uses its own defaults
+        and the filter is applied here on import instead${m ? '' : ' — which is what happens today'}.</p>
+    </div>
+  </section>`;
+}
+
+/** What the last pull actually brought in, and the two destructive buttons. */
+function mirrorCard() {
+  const m = JM.mirror();
+  const st = JM.statuses();
+  const sp = JM.sprints();
+  const act = JM.activeSprints();
+  const tasks = S.get().tasks;
+  const fromJira = tasks.filter(t => t.source === 'jira').length;
+
+  return h`
+  <section class="card">
+    <header>${icon('link')}<h3>Mirror</h3>
+      <div class="spacer" style="flex:1"></div>
+      ${raw(m ? `<span class="chip ok">${esc(m.project?.key || 'linked')}</span>`
+              : '<span class="chip">nothing pulled yet</span>')}
+    </header>
+    <div class="body">
+      ${raw(m ? `
+        <div class="tiny" style="display:grid;grid-template-columns:auto 1fr;gap:4px 14px">
+          <span class="mute">Project</span><span>${esc(m.project?.name || '')} (${esc(m.project?.key || '')})</span>
+          <span class="mute">Pulled</span><span>${esc(fmtDate(m.pulledAt))}</span>
+          <span class="mute">Issues</span><span>${fromJira} shown${m.counts ? ` of ${m.counts.pulled} pulled` : ''}</span>
+          <span class="mute">Statuses</span><span>${st.length} — ${esc(st.map(x => x.name).join(', '))}</span>
+          <span class="mute">Sprints</span><span>${sp.length}${act.length ? `, ${act.length} active: ${esc(act.map(x => x.name).join(', '))}` : ''}</span>
+          <span class="mute">Components</span><span>${JM.components().length}</span>
+          <span class="mute">Versions</span><span>${JM.versions().length}</span>
+        </div>` : `
+        <p class="tiny">No mirror yet. Run the puller, then load the file it writes:</p>
+        <pre class="tiny" style="white-space:pre-wrap;background:var(--bg2,#f6f6f8);padding:8px 10px;border-radius:6px;margin:8px 0 0">powershell -ExecutionPolicy Bypass -File tools\\jira-pull.ps1</pre>`)}
+
+      <div class="row wrap" style="margin-top:14px;gap:8px">
+        <button class="btn primary sm" data-act="mirror-load">${icon('refresh')}Refresh from Jira</button>
+        <div class="spacer" style="flex:1"></div>
+        <button class="btn sm danger" data-act="tasks-clear">Delete all tasks</button>
+      </div>
+      <p class="tiny mute" style="margin-top:8px">A refresh <b>replaces</b> every mirrored issue —
+        that is what keeps deleted and out-of-scope issues from lingering. Tasks you created here and
+        never pushed to Jira are kept.</p>
     </div>
   </section>`;
 }
@@ -1075,6 +1194,7 @@ export default {
       you:      () => two([profileCard()], [appearanceCard()]),
       org:      () => two([divisionsCard(), rateCardSection()], [workCard(), linksCard()]),
       connect:  () => two([graphCard(), foldersCard()], [jiraCard(), bridgeCard()]),
+      jira:     () => two([masterFilterCard()], [mirrorCard()]),
       backup:   () => two([folderCard(), dataCard()], [cloudCard()]),
       security: () => one([securityCard()]),
       about:    () => one([aboutCard()]),
@@ -1091,6 +1211,57 @@ export default {
 
     acts(host, {
       tab: el => ctx.go('settings', el.dataset.t),
+
+      /* ---- Jira mirror: the Master Filter ---- */
+      'mf-comp': el => {
+        const v = el.dataset.v; const cur = JM.filter().components;
+        JM.setFilter({ components: cur.includes(v) ? cur.filter(x => x !== v) : [...cur, v] });
+        ctx.rerender();
+      },
+      'mf-label': el => {
+        const v = el.dataset.v; const cur = JM.filter().labels;
+        JM.setFilter({ labels: cur.includes(v) ? cur.filter(x => x !== v) : [...cur, v] });
+        ctx.rerender();
+      },
+      'mf-done': () => { JM.setFilter({ includeDone: !JM.filter().includeDone }); ctx.rerender(); },
+      'mf-all': () => {
+        JM.setFilter({ components: JM.components().map(c => c.name), labels: [] });
+        toast('Every component ticked, labels left open', 'ok'); ctx.rerender();
+      },
+      'mf-none': () => {
+        JM.setFilter({ components: [], labels: [] });
+        toast('Filter cleared — nothing is restricted now', 'warn', 6000); ctx.rerender();
+      },
+      'mf-save': () => {
+        download(JM.FILTER_FILE, JM.filterFile(), 'application/json');
+        toast(`${JM.FILTER_FILE} saved to Downloads — move it next to the mirror file`, 'ok', 8000);
+      },
+
+      /* ---- Jira mirror: load and clear ---- */
+      'mirror-load': async () => {
+        const f = await pickFile('.json');
+        if (!f) return;
+        try {
+          const r = JM.importMirror(f.text);
+          toast(`${r.kept} issue${r.kept === 1 ? '' : 's'} in, ${r.skipped} filtered out `
+              + `(${r.statuses} statuses, ${r.sprints} sprints)`, 'ok', 9000);
+          ctx.rerender();
+        } catch (e) {
+          toast(e.message || 'That file could not be read.', 'warn', 9000);
+        }
+      },
+      'tasks-clear': async () => {
+        const n = S.get().tasks.length;
+        if (!n) { toast('There are no tasks to delete.', 'ok'); return; }
+        const go = await confirmDlg(
+          `Delete all ${n} task${n === 1 ? '' : 's'}? Mirrored Jira issues come back on the next `
+          + `refresh, but anything created only in this app is gone for good.`,
+          { title: 'Delete all tasks', ok: 'Delete them', danger: true });
+        if (!go) return;
+        JM.clearTasks();
+        toast(`${n} task${n === 1 ? '' : 's'} deleted`, 'ok');
+        ctx.rerender();
+      },
 
       /* profile */
       'save-profile': () => {

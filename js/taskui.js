@@ -26,6 +26,21 @@ import {
 import { STATUSES, PRIORITIES, statusOf, prioRank, taskStats } from './calc.js';
 import { pushDialog, bulkQueueDialog } from './jiraui.js';
 import { IMPORTED_TAG, divisionLabel } from './jira.js';
+import * as JM from './jiramirror.js';
+
+/*
+ * MIRRORED MODE
+ *
+ * Once a Jira mirror has been pulled, this board stops being the app's own
+ * six-status board and becomes the mirrored project's. The lanes are Jira's statuses, the
+ * vocabulary is Jira's, and the column headers carry Jira's field names —
+ * "Summary", not "Task"; "Original estimate", not "Est". Anything else means
+ * two names for one field and a translation step in your head every time.
+ *
+ * `mirrored()` is the switch. With no mirror the app behaves exactly as it
+ * did, which is what keeps a fresh install and a project tab working.
+ */
+const mirrored = () => JM.hasMirror();
 
 /* ---------- per-panel state --------------------------------------------- */
 
@@ -33,10 +48,18 @@ const DEFAULTS = () => ({
   mode: 'board',
   q: '', project: '', division: '', assignee: '', priority: '',
   showDone: false,
+  /* mirrored mode: what the board groups into, and the Jira-side filters */
+  group: 'status',          // status | sprint | epic | assignee | component
+  sprint: '', issueType: '', component: '',
+  tree: true,               // list view: indent children under their parent
   /* list only */
-  col: { task: '', project: [], division: [], assignee: [], priority: [], status: [], tag: [], overdue: false },
+  col: { task: '', project: [], division: [], assignee: [], priority: [], status: [], tag: [],
+         key: [], issueType: [], sprint: [], component: [], overdue: false },
   sort: { by: 'due', dir: 'asc' },
 });
+
+/** Every column that filters by "one of these values". */
+const PICK_COLS = ['project', 'division', 'assignee', 'priority', 'status', 'key', 'issueType', 'sprint'];
 
 const panels = new Map();
 
@@ -64,23 +87,116 @@ const saveState = (key, ui) => {
 /** The toolbar filters. Shared by both modes — these are the explicit ones. */
 function baseRows(ui, scope) {
   const q = ui.q.trim().toLowerCase();
+  const mir = mirrored();
   return S.get().tasks.filter(t => {
     if (scope.projectId && (t.project || '') !== scope.projectId) return false;
-    if (!ui.showDone && t.status === 'done' && ui.mode !== 'list') return false;
+    /* "Done" means Jira's status CATEGORY once mirrored, not the app's single
+       done id — otherwise Cancelled and Approved by Licensor stay on a board
+       that is meant to show what is still in flight. */
+    const isDone = mir ? t.statusCategory === 'done' : t.status === 'done';
+    if (!ui.showDone && isDone && ui.mode !== 'list') return false;
     if (!scope.projectId && ui.project && (t.project || '') !== ui.project) return false;
     if (ui.division && (t.division || '') !== ui.division) return false;
     if (ui.assignee && (t.assignee || '') !== ui.assignee) return false;
     if (ui.priority && t.priority !== ui.priority) return false;
-    if (q && !(`${t.title} ${t.desc || ''} ${(t.tags || []).join(' ')}`.toLowerCase().includes(q))) return false;
+    if (ui.sprint && (t.sprint || '') !== ui.sprint) return false;
+    if (ui.issueType && (t.issueType || '') !== ui.issueType) return false;
+    if (ui.component && !(t.components || []).includes(ui.component)) return false;
+    if (q && !(`${t.jiraKey || ''} ${t.title} ${t.desc || ''} ${(t.tags || []).join(' ')}`
+               .toLowerCase().includes(q))) return false;
     return true;
   });
+}
+
+/* ---------- the grouping axis ------------------------------------------- */
+
+const NONE = '—none—';   // the bucket for rows with no value on this axis
+
+/**
+ * What the board groups into, as `{ id, label, color, of(task) }`.
+ *
+ * One shape for every axis, so `board()` does not branch five ways. `of()`
+ * reads the task's value on that axis and must return the lane id.
+ */
+function axis(ui) {
+  if (!mirrored() || ui.group === 'status') {
+    if (!mirrored()) {
+      return { key: 'status', of: t => t.status,
+               lanes: STATUSES.filter(st => ui.showDone || st.id !== 'done')
+                 .map(st => ({ id: st.id, label: st.label, color: st.color })) };
+    }
+    const cat = { new: '#0F6CBD', indeterminate: '#6264A7', done: '#13A10E' };
+    return { key: 'status', of: t => t.jiraStatus,
+             lanes: JM.statuses().filter(st => ui.showDone || st.category !== 'done')
+               .map(st => ({ id: st.name, label: st.name, color: cat[st.category] || '#8A8886' })) };
+  }
+  if (ui.group === 'sprint') {
+    /* Active first, then future, then whatever closed sprints still carry
+       unfinished work — a closed sprint with open issues is worth seeing. */
+    const used = new Set(S.get().tasks.map(t => t.sprint).filter(Boolean));
+    const lanes = JM.sprints().filter(s => used.has(s.name)).map(s => ({
+      id: s.name, label: s.name,
+      color: s.state === 'active' ? '#13A10E' : s.state === 'future' ? '#0F6CBD' : '#8A8886',
+      note: s.state,
+    }));
+    return { key: 'sprint', of: t => t.sprint || NONE,
+             lanes: [...lanes, { id: NONE, label: 'No sprint', color: '#8A8886' }] };
+  }
+  if (ui.group === 'epic') {
+    const s = S.get();
+    const byKey = new Map(s.tasks.filter(t => t.jiraKey).map(t => [t.jiraKey, t]));
+    const keys = [...new Set(s.tasks.map(t => t.parentKey).filter(Boolean))];
+    const lanes = keys.map(k => ({
+      id: k, label: byKey.get(k) ? `${k} · ${byKey.get(k).title}` : k, color: '#B146C2',
+    }));
+    return { key: 'epic', of: t => t.parentKey || NONE,
+             lanes: [...lanes, { id: NONE, label: 'No parent', color: '#8A8886' }] };
+  }
+  if (ui.group === 'assignee') {
+    const s = S.get();
+    const ids = [...new Set(S.get().tasks.map(t => t.assignee).filter(Boolean))];
+    const lanes = ids.map(id => ({ id, label: S.personName(id) || id, color: avColor(S.personName(id) || id) }));
+    lanes.sort((a, b) => a.label.localeCompare(b.label));
+    return { key: 'assignee', of: t => t.assignee || NONE,
+             lanes: [...lanes, { id: NONE, label: 'Unassigned', color: '#8A8886' }] };
+  }
+  // component
+  const names = JM.components().map(c => c.name);
+  const used = new Set(S.get().tasks.flatMap(t => t.components || []));
+  const lanes = names.filter(n => used.has(n)).map(n => ({ id: n, label: n, color: '#0E7A70' }));
+  return { key: 'component', of: t => (t.components || [])[0] || NONE,
+           lanes: [...lanes, { id: NONE, label: 'No component', color: '#8A8886' }] };
 }
 
 /* What each filterable column is, in one place: how to read it, what the
    options are, and how to sort by it. The header buttons, the popovers and
    the sorters are all generated from this. */
+/*
+ * Column labels follow Jira once a mirror exists.
+ *
+ * "Task" and "Est" are this app's words for what Jira calls "Summary" and
+ * "Original estimate". Showing both names for one field means translating in
+ * your head on every glance, and the whole point of the mirror is that you
+ * stop having to. Before a pull there is nothing to be faithful to, so the
+ * app's own words stand.
+ */
+const L = (own, jira) => (mirrored() ? jira : own);
+
 export const COLUMNS = {
-  task:     { label: 'Task',     kind: 'text', get: t => t.title },
+  task:     { get label() { return L('Task', 'Summary'); },
+              kind: 'text', get: t => t.title },
+  key:      { label: 'Key', kind: 'pick', get: t => t.jiraKey || '',
+              opts: s => [...new Set(s.tasks.map(t => t.jiraKey).filter(Boolean))].sort().map(x => ({ v: x, t: x })),
+              sortVal: t => t.jiraKey || '' },
+  issueType: { label: 'Issue Type', kind: 'pick', get: t => t.issueType || '',
+              opts: () => JM.issueTypes().map(x => ({ v: x.name, t: x.name })),
+              sortVal: t => -JM.levelOf(t) },
+  sprint:   { label: 'Sprint', kind: 'pick', get: t => t.sprint || '',
+              opts: () => [{ v: '', t: 'No sprint' }, ...JM.sprints().map(x => ({ v: x.name, t: x.name }))],
+              sortVal: t => t.sprint || '' },
+  component: { label: 'Components', kind: 'pick', get: t => (t.components || []),
+              opts: () => JM.components().map(x => ({ v: x.name, t: x.name })),
+              multi: true, sortVal: t => (t.components || []).join(' ') },
   project:  { label: 'Project',  kind: 'pick', get: t => t.project || '',
               opts: s => s.projects.map(p => ({ v: p.id, t: p.code || p.name })),
               sortVal: t => S.projectName(t.project) || '' },
@@ -93,14 +209,23 @@ export const COLUMNS = {
   priority: { label: 'Priority', kind: 'pick', get: t => t.priority || 'normal',
               opts: () => PRIORITIES.map(p => ({ v: p.id, t: p.label })),
               sortVal: t => prioRank(t.priority) },
-  status:   { label: 'Status',   kind: 'pick', get: t => t.status,
-              opts: () => STATUSES.map(x => ({ v: x.id, t: x.label })),
-              sortVal: t => STATUSES.findIndex(x => x.id === t.status) },
-  due:      { label: 'Due',      kind: 'date', get: t => t.due || '',
+  status:   { label: 'Status', kind: 'pick',
+              get: t => (mirrored() ? (t.jiraStatus || '') : t.status),
+              opts: () => (mirrored()
+                ? JM.statuses().map(x => ({ v: x.name, t: x.name }))
+                : STATUSES.map(x => ({ v: x.id, t: x.label }))),
+              sortVal: t => (mirrored()
+                ? JM.statuses().findIndex(x => x.name === t.jiraStatus)
+                : STATUSES.findIndex(x => x.id === t.status)) },
+  due:      { get label() { return L('Due', 'Due date'); },
+              kind: 'date', get: t => t.due || '',
               sortVal: t => t.due || '9999-99-99' },
-  estimate: { label: 'Est',      kind: 'num',  get: t => t.estimate || 0,
-              sortVal: t => Number(t.estimate) || 0 },
-  tag:      { label: 'Tags',     kind: 'pick', get: t => (t.tags || []),
+  estimate: { get label() { return L('Est', 'Original estimate'); },
+              kind: 'num',
+              get: t => (mirrored() ? (t.originalEstimate || 0) : (t.estimate || 0)),
+              sortVal: t => Number(mirrored() ? t.originalEstimate : t.estimate) || 0 },
+  tag:      { get label() { return L('Tags', 'Labels'); },
+              kind: 'pick', get: t => (t.tags || []),
               opts: s => [...new Set((s.tasks || []).flatMap(x => x.tags || []))].sort().map(x => ({ v: x, t: x })),
               multi: true, sortVal: t => (t.tags || []).join(' ') },
 };
@@ -110,11 +235,13 @@ function listRows(ui, scope) {
   const c = ui.col;
   let rows = baseRows(ui, scope).filter(t => {
     if (c.task && !String(t.title).toLowerCase().includes(c.task.toLowerCase())) return false;
-    for (const k of ['project', 'division', 'assignee', 'priority', 'status']) {
+    for (const k of PICK_COLS) {
       if (c[k]?.length && !c[k].includes(COLUMNS[k].get(t))) return false;
     }
-    // Tags are a list on the task, so "any of the chosen" is the useful test.
+    // Tags and Components are lists on the task, so "any of the chosen" is the
+    // useful test — an issue in GFX *and* UI should survive a filter for either.
     if (c.tag?.length && !(t.tags || []).some(x => c.tag.includes(x))) return false;
+    if (c.component?.length && !(t.components || []).some(x => c.component.includes(x))) return false;
     if (c.overdue && !(t.due && t.due < today() && t.status !== 'done')) return false;
     return true;
   });
@@ -133,17 +260,24 @@ function listRows(ui, scope) {
 
 export const anyColFilter = ui =>
   !!(ui.col.task || ui.col.overdue ||
-     ['project', 'division', 'assignee', 'priority', 'status', 'tag'].some(k => ui.col[k]?.length));
+     [...PICK_COLS, 'tag', 'component'].some(k => ui.col[k]?.length));
 
 /* ---------- board ordering ---------------------------------------------- */
 
 const GAP = 1000;
-const laneOf = (rows, status) => rows.filter(t => t.status === status)
+
+/* Which field decides a card's lane. Mirrored, the lanes ARE Jira's statuses,
+   so ordering has to be computed against `jiraStatus` — comparing against the
+   app's `status` would put every "Blocked", "Under Review" and "Pending
+   Licensor" card in one bucket and scramble their hand-set order. */
+const laneKey = t => (mirrored() ? (t.jiraStatus || '') : t.status);
+
+const laneOf = (rows, status) => rows.filter(t => laneKey(t) === status)
   .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || (a.created || 0) - (b.created || 0));
 
 /** The order value that puts a task at the very top of a lane. */
 export function topOrder(status, state = S.get()) {
-  const first = (state.tasks || []).filter(t => t.status === status)
+  const first = (state.tasks || []).filter(t => laneKey(t) === status)
     .reduce((m, t) => Math.min(m, t.order ?? 0), Infinity);
   return first === Infinity ? GAP : first - GAP;
 }
@@ -204,9 +338,28 @@ function toolbar(ui, scope) {
     <select data-change="f" data-k="priority" style="width:auto">
       ${raw(opt(PRIORITIES.map(p => ({ v: p.id, t: p.label })), ui.priority, 'Any priority'))}
     </select>
+    ${raw(!mirrored() ? '' : `
+      <select data-change="f" data-k="issueType" style="width:auto" title="Issue Type">
+        ${opt(JM.issueTypes().map(x => ({ v: x.name, t: x.name })), ui.issueType, 'Any type')}
+      </select>
+      <select data-change="f" data-k="sprint" style="width:auto" title="Sprint">
+        ${opt(JM.sprints().map(x => ({ v: x.name, t: x.state === 'active' ? `${x.name} ● active` : x.name })),
+              ui.sprint, 'Any sprint')}
+      </select>
+      <select data-change="f" data-k="component" style="width:auto" title="Components">
+        ${opt(JM.components().map(x => ({ v: x.name, t: x.name })), ui.component, 'Any component')}
+      </select>
+      <div class="seg" title="What the board groups into">
+        ${['status', 'sprint', 'epic', 'assignee', 'component'].map(g =>
+          `<button data-act="group" data-v="${g}" class="${ui.group === g ? 'on' : ''}">${g[0].toUpperCase() + g.slice(1)}</button>`).join('')}
+      </div>`)}
     <label class="row tiny" style="gap:6px;cursor:pointer">
       <input type="checkbox" data-change="done" ${ui.showDone ? 'checked' : ''}> Show done
     </label>
+    ${raw(mirrored() && ui.mode === 'list' ? `
+      <label class="row tiny" style="gap:6px;cursor:pointer" title="Indent sub-tasks under their Epic">
+        <input type="checkbox" data-change="tree" ${ui.tree ? 'checked' : ''}> Hierarchy
+      </label>` : '')}
     <div class="spacer"></div>
     ${raw(ui.mode === 'list' && anyColFilter(ui)
       ? '<button class="btn sm subtle" data-act="clearcols">Clear column filters</button>' : '')}
@@ -215,7 +368,8 @@ function toolbar(ui, scope) {
     <button class="btn sm subtle" data-act="import" title="Import tasks from CSV">${icon('up')}Import</button>
   </div>`;
 }
-const anyFilter = ui => ui.project || ui.division || ui.assignee || ui.priority || ui.q;
+const anyFilter = ui => ui.project || ui.division || ui.assignee || ui.priority || ui.q
+  || ui.sprint || ui.issueType || ui.component;
 
 /* ---------- rendering: cards and board ---------------------------------- */
 
@@ -237,44 +391,75 @@ function taskCard(t, ui) {
   const picked = ui.sel.has(t.id);
   const obj = t.objectiveId ? S.byId(s.objectives, t.objectiveId) : null;
 
+  /* Issue type is the one piece of Jira shape that changes how a card should
+     be read — an Epic is a container, a Sub-task is a fragment — so it gets a
+     glyph rather than another word-shaped chip competing with the summary. */
+  const TYPE_GLYPH = { Epic: '⬒', Story: '◆', Bug: '●', 'Sub-task': '◇', Initiative: '▲', Task: '▪', Request: '✎' };
+
   return h`
-  <div class="tcard p-${t.priority || 'normal'}${picked ? ' picked' : ''}" draggable="true" data-id="${t.id}">
+  <div class="tcard p-${t.priority || 'normal'}${picked ? ' picked' : ''}${t.flagged ? ' flagged' : ''}"
+       draggable="true" data-id="${t.id}">
     <div class="tc-head">
       <input type="checkbox" class="tc-pick" data-act="pick" ${picked ? 'checked' : ''}
              title="Select for Jira" aria-label="Select task">
       <div class="t" data-act="open">${t.title}</div>
     </div>
     <div class="meta" data-act="open">
-      ${raw(p ? `<span class="chip" style="background:${p.color}22;color:${p.color}">${esc(p.code)}</span>` : '')}
-      ${raw(d ? `<span class="pill-div" style="background:${d.color}">${esc(d.id)}</span>` : '')}
-      ${raw(t.jira?.key ? `<span class="chip tiny ok" title="In Jira">${esc(t.jira.key)}</span>`
+      ${raw(t.jiraKey
+        ? `<span class="chip tiny ok" title="${esc(t.issueType || 'Issue')} — open in Jira">${esc(TYPE_GLYPH[t.issueType] || '▪')} ${esc(t.jiraKey)}</span>`
+        : p ? `<span class="chip" style="background:${p.color}22;color:${p.color}">${esc(p.code)}</span>` : '')}
+      ${raw(t.jiraKey ? '' : t.jira?.key ? `<span class="chip tiny ok" title="In Jira">${esc(t.jira.key)}</span>`
             : t.jira?.state === 'queued' ? '<span class="chip tiny warn" title="Queued for Jira">queued</span>' : '')}
+      ${raw(d ? `<span class="pill-div" style="background:${d.color}">${esc(d.id)}</span>` : '')}
+      ${raw(t.sprint ? `<span class="chip tiny" title="Sprint">${esc(t.sprint)}</span>` : '')}
+      ${raw((t.fixVersions || []).length ? `<span class="chip tiny info" title="Fix versions">${esc(t.fixVersions.join(', '))}</span>` : '')}
       ${raw(obj ? `<span class="chip tiny info" title="${esc(obj.title)}">◎ ${esc(obj.quarter || 'OKR')}</span>` : '')}
-      ${raw(t.due ? `<span class="${late ? 'overdue' : ''}">${esc(fmtDate(t.due))}</span>` : '')}
+      ${raw(t.due ? `<span class="${late ? 'overdue' : ''}" title="Due date">${esc(fmtDate(t.due))}</span>` : '')}
       ${raw(cl.length ? `<span title="Checklist">☑ ${doneN}/${cl.length}</span>` : '')}
-      ${raw(t.estimate ? `<span title="Estimate">${t.estimate}h</span>` : '')}
+      ${raw(t.originalEstimate ? `<span title="Original estimate">${t.originalEstimate}h</span>`
+            : t.estimate ? `<span title="Estimate">${t.estimate}d</span>` : '')}
+      ${raw(t.storyPoints ? `<span class="chip tiny" title="Story Points">${esc(String(t.storyPoints))} SP</span>` : '')}
       <span class="spacer"></span>
-      ${raw(who ? `<span class="avatar xs" style="background:${avColor(who.name)}" title="${esc(who.name)}">${esc(ini(who.name))}</span>` : '')}
+      ${raw(who ? `<span class="avatar xs" style="background:${avColor(who.name)}" title="${esc(who.name)}">${esc(ini(who.name))}</span>`
+            : t.assigneeName ? `<span class="avatar xs" style="background:${avColor(t.assigneeName)}" title="${esc(t.assigneeName)}">${esc(ini(t.assigneeName))}</span>` : '')}
     </div>
   </div>`;
 }
 
 function board(rows, ui) {
-  const lanes = STATUSES.filter(st => ui.showDone || st.id !== 'done');
-  const g = groupBy(rows, t => t.status);
-  return h`<div class="board">${raw(lanes.map(st => {
-    /* Hand order only. See the note at the top of the file. */
-    const items = (g[st.id] || []).slice()
+  const ax = axis(ui);
+  const g = groupBy(rows, ax.of);
+
+  /* Dragging writes `task.order`, which only means anything when the lanes
+     ARE the statuses. Grouping by sprint or epic turns the board into a
+     read-only lens, so the quick-add button and the drop zones go away rather
+     than pretending a drop would stick. */
+  const arrangeable = ax.key === 'status';
+
+  // A lane with nothing in it is noise on an axis with 30 sprints; keep empty
+  // status lanes (they are the workflow) and drop empty ones elsewhere.
+  const lanes = ax.lanes.filter(l => arrangeable || (g[l.id] || []).length);
+
+  if (!lanes.length) {
+    return h`<div class="card"><div class="empty"><h4>Nothing to group</h4>
+      <p class="tiny mute">No task carries a value for this grouping yet.</p></div></div>`;
+  }
+
+  return h`<div class="board">${raw(lanes.map(l => {
+    const items = (g[l.id] || []).slice()
       .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || (a.created || 0) - (b.created || 0));
-    return `<section class="lane" data-lane="${st.id}">
+    const est = items.reduce((n, t) => n + (Number(t.originalEstimate) || 0), 0);
+    return `<section class="lane" data-lane="${esc(l.id)}"${arrangeable ? '' : ' data-noarrange="1"'}>
       <header>
-        <span class="dot" style="width:8px;height:8px;border-radius:50%;background:${st.color}"></span>
-        <b>${esc(st.label)}</b><span class="count">${items.length}</span>
+        <span class="dot" style="width:8px;height:8px;border-radius:50%;background:${l.color}"></span>
+        <b>${esc(l.label)}</b><span class="count">${items.length}</span>
+        ${l.note ? `<span class="chip tiny">${esc(l.note)}</span>` : ''}
+        ${est ? `<span class="tiny mute" title="Sum of Original estimate">${est}h</span>` : ''}
         <span class="spacer" style="flex:1"></span>
-        <button class="btn icon sm subtle" data-act="quick" data-s="${st.id}" title="Add at the top">
-          <svg class="ico"><use href="#i-plus"></use></svg></button>
+        ${arrangeable ? `<button class="btn icon sm subtle" data-act="quick" data-s="${esc(l.id)}" title="Add at the top">
+          <svg class="ico"><use href="#i-plus"></use></svg></button>` : ''}
       </header>
-      <div class="stack">${items.map(t => taskCard(t, ui)).join('')}<div class="drop-end"></div></div>
+      <div class="stack">${items.map(t => taskCard(t, ui)).join('')}${arrangeable ? '<div class="drop-end"></div>' : ''}</div>
     </section>`;
   }).join(''))}</div>`;
 }
@@ -306,6 +491,19 @@ function list(rows, ui) {
       <div class="tiny">${anyColFilter(ui) ? 'A column filter is hiding them.' : 'Adjust the filters above.'}</div></div></div>`;
   }
   const s = S.get();
+  const mir = mirrored();
+
+  /*
+   * Hierarchy.
+   *
+   * Almost every issue in a real project sits under an Epic, and a flat list reads
+   * as noise. `JM.tree` returns parents immediately before their children with
+   * a depth, so one indent turns the same rows into the shape Jira shows. It
+   * is off when sorting by a column, because an indent implies an order and
+   * the two would fight.
+   */
+  const sorted = mir && ui.tree && ui.sort.by === 'due' ? JM.tree(rows) : rows.map(row => ({ row, depth: 0 }));
+
   return h`
   <div class="card"><div class="tbl-wrap"><table class="tbl tbl-tasks">
     <thead><tr>
@@ -313,33 +511,47 @@ function list(rows, ui) {
         <input type="checkbox" data-act="pickall" title="Select all shown"
                ${rows.length && rows.every(t => ui.sel.has(t.id)) ? 'checked' : ''}></th>
       <th style="width:26px" class="nofilter"></th>
-      ${raw(th('task', ui))}${raw(th('project', ui))}${raw(th('division', ui))}${raw(th('assignee', ui))}
+      ${raw(mir ? th('key', ui) : '')}
+      ${raw(th('task', ui))}
+      ${raw(mir ? th('issueType', ui) : th('project', ui))}
+      ${raw(mir ? th('sprint', ui) : th('division', ui))}
+      ${raw(th('assignee', ui))}
       ${raw(th('priority', ui))}${raw(th('status', ui))}${raw(th('due', ui))}${raw(th('estimate', ui, 'class="num"'))}
       <th class="nofilter"></th>
     </tr></thead>
-    <tbody>${raw(rows.map(t => {
+    <tbody>${raw(sorted.map(({ row: t, depth }) => {
       const p = S.byId(s.projects, t.project);
       const d = S.byId(s.divisions, t.division);
       const late = t.due && t.due < today() && t.status !== 'done';
       const st = statusOf(t.status);
       const obj = t.objectiveId ? S.byId(s.objectives, t.objectiveId) : null;
+      const isDone = mir ? t.statusCategory === 'done' : t.status === 'done';
       return `<tr data-id="${t.id}"${ui.sel.has(t.id) ? ' class="picked"' : ''}>
         <td><input type="checkbox" data-act="pick" ${ui.sel.has(t.id) ? 'checked' : ''} title="Select for Jira"></td>
-        <td><input type="checkbox" data-act="toggle" ${t.status === 'done' ? 'checked' : ''} title="Mark done"></td>
-        <td data-act="open" style="cursor:pointer">
-          <div class="strong">${esc(t.title)}</div>
+        <td><input type="checkbox" data-act="toggle" ${isDone ? 'checked' : ''} title="Mark done"></td>
+        ${mir ? `<td class="tiny">${t.jiraKey
+          ? `<a href="${esc(t.url || '#')}" target="_blank" rel="noopener" title="Open in Jira">${esc(t.jiraKey)}</a>`
+          : '<span class="mute">—</span>'}</td>` : ''}
+        <td data-act="open" style="cursor:pointer${depth ? `;padding-left:${10 + depth * 18}px` : ''}">
+          <div class="strong">${depth ? '<span class="mute" style="margin-right:4px">↳</span>' : ''}${esc(t.title)}</div>
           <div class="tiny mute">
             ${(t.tags || []).map(x => `<span class="tag-x${String(x).toLowerCase() === IMPORTED_TAG.toLowerCase() ? ' imported' : ''}">#${esc(x)}</span>`).join(' ')}
             ${obj ? `<span class="tag-x obj" title="${esc(obj.title)}">◎ ${esc(obj.title)}</span>` : ''}
           </div>
         </td>
-        <td>${p ? `<span class="chip" style="background:${p.color}22;color:${p.color}">${esc(p.code)}</span>` : '<span class="mute">—</span>'}</td>
-        <td>${d ? `<span class="pill-div" style="background:${d.color}">${esc(d.id)}</span>` : ''}</td>
-        <td class="tiny">${t.assignee ? esc(S.personName(t.assignee)) : '<span class="mute">Unassigned</span>'}</td>
-        <td><span class="chip ${t.priority === 'critical' ? 'risk' : t.priority === 'high' ? 'warn' : ''}">${esc(t.priority || 'normal')}</span></td>
-        <td><span class="chip" style="background:${st.color}22;color:${st.color}">${esc(st.label)}</span></td>
+        ${mir
+          ? `<td class="tiny">${t.issueType ? esc(t.issueType) : '<span class="mute">—</span>'}</td>`
+          : `<td>${p ? `<span class="chip" style="background:${p.color}22;color:${p.color}">${esc(p.code)}</span>` : '<span class="mute">—</span>'}</td>`}
+        ${mir
+          ? `<td class="tiny">${t.sprint ? esc(t.sprint) : '<span class="mute">—</span>'}</td>`
+          : `<td>${d ? `<span class="pill-div" style="background:${d.color}">${esc(d.id)}</span>` : ''}</td>`}
+        <td class="tiny">${t.assignee ? esc(S.personName(t.assignee))
+          : t.assigneeName ? esc(t.assigneeName) : '<span class="mute">Unassigned</span>'}</td>
+        <td><span class="chip ${t.priority === 'critical' ? 'risk' : t.priority === 'high' ? 'warn' : ''}"
+             ${mir && t.jiraPriority ? `title="${esc(t.jiraPriority)}"` : ''}>${esc(mir ? (t.jiraPriority || t.priority || 'normal') : (t.priority || 'normal'))}</span></td>
+        <td><span class="chip" style="background:${st.color}22;color:${st.color}">${esc(mir ? (t.jiraStatus || st.label) : st.label)}</span></td>
         <td class="tiny ${late ? 'overdue' : ''}">${t.due ? esc(fmtDate(t.due)) + ' <span class="mute">' + esc(relDays(t.due)) + '</span>' : '<span class="mute">—</span>'}</td>
-        <td class="num tiny">${t.estimate || ''}</td>
+        <td class="num tiny">${(mir ? t.originalEstimate : t.estimate) || ''}</td>
         <td class="act"><button class="btn icon sm subtle" data-act="row-menu"><svg class="ico"><use href="#i-dots"></use></svg></button></td>
       </tr>`;
     }).join(''))}</tbody>
@@ -543,8 +755,11 @@ function wirePanel(host) {
     mode: el => { tp().ui.mode = el.dataset.v; save(); draw(); },
     f: el => { tp().ui[el.dataset.k] = el.value; save(); draw(); },
     done: el => { tp().ui.showDone = el.checked; save(); draw(); },
+    tree: el => { tp().ui.tree = el.checked; save(); draw(); },
+    group: el => { tp().ui.group = el.dataset.v; save(); draw(); },
     clear: () => {
-      Object.assign(tp().ui, { project: '', division: '', assignee: '', priority: '', q: '' });
+      Object.assign(tp().ui, { project: '', division: '', assignee: '', priority: '', q: '',
+                               sprint: '', issueType: '', component: '' });
       save(); draw();
     },
     clearcols: () => { tp().ui.col = { ...DEFAULTS().col }; save(); draw(); },
@@ -676,9 +891,35 @@ export async function editTask(id, preset = {}) {
   const objs = s.objectives.slice().sort((a, b) =>
     String(b.quarter || '').localeCompare(String(a.quarter || '')) || a.title.localeCompare(b.title));
 
+  /*
+   * Mirrored, this dialog speaks Jira.
+   *
+   * The labels become Summary / Original estimate / Time Spent / Labels, and
+   * the two drop-downs offer Jira's own statuses and priorities rather than
+   * this app's six and four. Editing a mirrored issue here changes it HERE
+   * only — the banner says so, because a form that looks like Jira and quietly
+   * does not reach it is worse than one that never pretended.
+   */
+  const mir = mirrored();
+  const isJira = !!v.jiraKey;
+  const jiraHead = isJira ? `
+    <div class="banner" style="grid-column:span 12;margin-bottom:10px">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <a href="${esc(v.url || '#')}" target="_blank" rel="noopener" class="chip ok"><b>${esc(v.jiraKey)}</b></a>
+        ${v.issueType ? `<span class="chip tiny">${esc(v.issueType)}</span>` : ''}
+        ${v.parentKey ? `<span class="tiny mute">Parent <b>${esc(v.parentKey)}</b></span>` : ''}
+        ${(v.components || []).length ? `<span class="tiny mute">Components ${esc(v.components.join(', '))}</span>` : ''}
+        ${v.sprint ? `<span class="tiny mute">Sprint ${esc(v.sprint)}</span>` : ''}
+        ${(v.fixVersions || []).length ? `<span class="tiny mute">Fix versions ${esc(v.fixVersions.join(', '))}</span>` : ''}
+      </div>
+      <div class="tiny mute" style="margin-top:6px">Changes here stay in this app. Jira keeps its own
+        values until you push.</div>
+    </div>` : '';
+
   const body = `
   <div style="display:grid;grid-template-columns:repeat(12,1fr);gap:0 12px">
-    <label class="fld" style="grid-column:span 12"><span>Title *</span>
+    ${jiraHead}
+    <label class="fld" style="grid-column:span 12"><span>${mir ? 'Summary' : 'Title'} *</span>
       <input id="e_title" value="${esc(v.title)}" placeholder="What needs to happen?"></label>
 
     <label class="fld" style="grid-column:span 6"><span>Project</span>
@@ -690,16 +931,33 @@ export async function editTask(id, preset = {}) {
     <label class="fld" style="grid-column:span 6"><span>Assignee</span>
       <select id="e_assignee">${sel(s.people.filter(p => p.active !== false).map(p => ({ v: p.id, t: `${p.name} · ${p.role}` })), v.assignee, 'Unassigned')}</select></label>
     <label class="fld" style="grid-column:span 3"><span>Status</span>
-      <select id="e_status">${sel(STATUSES.map(x => ({ v: x.id, t: x.label })), v.status)}</select></label>
+      <select id="e_status">${mir
+        ? sel(JM.statuses().map(x => ({ v: x.name, t: x.name })), v.jiraStatus)
+        : sel(STATUSES.map(x => ({ v: x.id, t: x.label })), v.status)}</select></label>
     <label class="fld" style="grid-column:span 3"><span>Priority</span>
-      <select id="e_priority">${sel(PRIORITIES.map(x => ({ v: x.id, t: x.label })), v.priority)}</select></label>
+      <select id="e_priority">${mir
+        ? sel(JM.prioritiesInUse(v.jiraPriority).map(x => ({ v: x.name, t: x.name })), v.jiraPriority)
+        : sel(PRIORITIES.map(x => ({ v: x.id, t: x.label })), v.priority)}</select></label>
 
+    ${mir ? `
+    <label class="fld" style="grid-column:span 3"><span>Start date</span>
+      <input type="date" id="e_start" value="${esc(v.start || '')}"></label>
+    <label class="fld" style="grid-column:span 3"><span>Due date</span>
+      <input type="date" id="e_due" value="${esc(v.due || '')}"></label>
+    <label class="fld" style="grid-column:span 2"><span>Original estimate (h)</span>
+      <input type="number" id="e_estimate" min="0" step="0.5" value="${v.originalEstimate ?? ''}"></label>
+    <label class="fld" style="grid-column:span 2"><span>Time Spent (h)</span>
+      <input type="number" id="e_spent" min="0" step="0.5" value="${v.timeSpent ?? ''}"></label>
+    <label class="fld" style="grid-column:span 2"><span>Story Points</span>
+      <input type="number" id="e_sp" min="0" step="0.5" value="${v.storyPoints ?? ''}"></label>
+    ` : `
     <label class="fld" style="grid-column:span 4"><span>Due</span>
       <input type="date" id="e_due" value="${esc(v.due || '')}"></label>
     <label class="fld" style="grid-column:span 4"><span>Estimate (h)</span>
       <input type="number" id="e_estimate" min="0" step="0.5" value="${v.estimate ?? ''}"></label>
     <label class="fld" style="grid-column:span 4"><span>Spent (h)</span>
       <input type="number" id="e_spent" min="0" step="0.5" value="${v.spent ?? ''}"></label>
+    `}
 
     <label class="fld" style="grid-column:span 12"><span>Objective</span>
       <select id="e_obj">${sel(objs.map(o => ({ v: o.id, t: `${o.quarter || '—'} · ${o.title}` })), v.objectiveId, 'Not linked to an objective')}</select>
@@ -708,7 +966,7 @@ export async function editTask(id, preset = {}) {
     <label class="fld" style="grid-column:span 12"><span>Notes</span>
       <textarea id="e_desc" rows="3" placeholder="Context, links, decisions…">${esc(v.desc || '')}</textarea></label>
 
-    <label class="fld" style="grid-column:span 12"><span>Tags</span>
+    <label class="fld" style="grid-column:span 12"><span>${mir ? 'Labels' : 'Tags'}</span>
       <input id="e_tags" value="${esc((v.tags || []).join(', '))}" placeholder="milestone, finance, risk">
       <span class="hint">Comma separated. <code>${IMPORTED_TAG}</code> is added automatically once a task is filed in Jira.</span></label>
 
@@ -776,16 +1034,40 @@ export async function editTask(id, preset = {}) {
         if (await confirmDlg(`Delete “${t.title}”?`, { ok: 'Delete' })) close({ __delete: true });
       });
       root.querySelector('[data-ok]').onclick = () => {
-        const g = k => root.querySelector('#e_' + k).value;
-        if (!g('title').trim()) { root.querySelector('#e_title').focus(); return toast('A title is required', 'warn'); }
-        close({
+        const g = k => root.querySelector('#e_' + k)?.value ?? '';
+        if (!g('title').trim()) {
+          root.querySelector('#e_title').focus();
+          return toast(`A ${mir ? 'summary' : 'title'} is required`, 'warn');
+        }
+        const num = k => (g(k) === '' ? 0 : +g(k));
+        const common = {
           title: g('title').trim(), project: g('project'), division: g('division'),
-          assignee: g('assignee'), status: g('status'), priority: g('priority'),
-          due: g('due'), estimate: g('estimate') === '' ? 0 : +g('estimate'),
-          spent: g('spent') === '' ? 0 : +g('spent'), desc: g('desc'),
+          assignee: g('assignee'), due: g('due'), desc: g('desc'),
           objectiveId: g('obj') || null,
           tags: g('tags').split(',').map(x => x.trim()).filter(Boolean),
           checklist: cl.filter(c => c.t.trim()),
+        };
+
+        if (!mir) {
+          return close({ ...common, status: g('status'), priority: g('priority'),
+                         estimate: num('estimate'), spent: num('spent') });
+        }
+
+        /* Mirrored: the drop-downs hold Jira's names. `statusPatch` turns the
+           chosen status into all three fields at once, so the app's own views
+           keep working while the board shows Jira's word. Hours stay hours in
+           the Jira fields and are converted into the app's day-based ones. */
+        const oe = num('estimate'), ts = num('spent');
+        close({
+          ...common,
+          ...JM.statusPatch(g('status')),
+          jiraPriority: g('priority'),
+          priority: JM.appPriority(g('priority')),
+          start: g('start'),
+          originalEstimate: oe, timeSpent: ts,
+          storyPoints: g('sp') === '' ? null : +g('sp'),
+          estimate: +(oe / 8).toFixed(2), spent: +(ts / 8).toFixed(2),
+          labels: common.tags,
         });
       };
     },
@@ -793,14 +1075,21 @@ export async function editTask(id, preset = {}) {
 
   if (!res) return null;
   if (res.__delete) { S.remove('tasks', id); toast('Task deleted', 'ok'); return 'deleted'; }
+  /* Which field names the lane depends on the mode — see `laneKey`. Using
+     `status` here while the board groups by `jiraStatus` would compute the new
+     order against the wrong column and drop the card in an arbitrary place. */
+  const laneNow = mirrored() ? (res.jiraStatus || '') : res.status;
+  const laneName = mirrored() ? laneNow : statusOf(res.status).label;
+
   if (t) {
     // Moving lane by hand in the editor should still land it somewhere sane.
-    const patch = res.status !== t.status ? { ...res, order: topOrder(res.status) } : res;
+    const laneWas = mirrored() ? (t.jiraStatus || '') : t.status;
+    const patch = laneNow !== laneWas ? { ...res, order: topOrder(laneNow) } : res;
     S.update('tasks', id, patch);
     toast('Task saved', 'ok');
   } else {
-    S.add('tasks', { ...res, order: topOrder(res.status) });
-    toast(`Task created at the top of ${statusOf(res.status).label}`, 'ok');
+    S.add('tasks', { ...res, order: topOrder(laneNow) });
+    toast(`Task created at the top of ${laneName}`, 'ok');
   }
   return 'saved';
 }
@@ -841,6 +1130,11 @@ function wireDnd(root, rerender) {
     if (!dragId) return;
     const lane = e.target.closest('.lane');
     if (!lane) return;
+    /* Grouped by sprint, epic, assignee or component the board is a lens, not
+       an arrangement: there is no field a drop could write that would make the
+       card stay. Refusing the drop is honest; accepting it and snapping back
+       is not. */
+    if (lane.dataset.noarrange) { e.dataTransfer.dropEffect = 'none'; return; }
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     $$('.lane', root).forEach(l => l.classList.toggle('drop', l === lane));
@@ -858,7 +1152,7 @@ function wireDnd(root, rerender) {
 
   root.addEventListener('drop', e => {
     const lane = e.target.closest('.lane');
-    if (!lane || !dragId) return;
+    if (!lane || !dragId || lane.dataset.noarrange) return;
     e.preventDefault();
 
     const status = lane.dataset.lane;
@@ -876,9 +1170,18 @@ function wireDnd(root, rerender) {
     const t = S.byId(S.get().tasks, id);
     if (!t) return rerender();
     const order = orderAt(status, index === -1 ? siblings.length : index, id);
-    const moved = t.status !== status;
-    S.update('tasks', id, { status, order });
-    if (moved) toast(`Moved to ${statusOf(status).label}`, '', 1400);
+    const moved = laneKey(t) !== status;
+
+    /* Mirrored, the lane id is a Jira status NAME. Writing it straight into
+       `status` would put "Under Review" where the app expects one of its six
+       ids, and every count that reads `status` would quietly stop matching.
+       `statusPatch` writes all three fields consistently. */
+    const patch = mirrored() ? { ...JM.statusPatch(status), order } : { status, order };
+    S.update('tasks', id, patch);
+    if (moved) toast(`Moved to ${mirrored() ? status : statusOf(status).label}`, '', 1400);
+    if (moved && t.jiraKey) {
+      toast('Changed here only — Jira still shows the old status until you push.', 'warn', 5000);
+    }
     rerender();
   });
 }
