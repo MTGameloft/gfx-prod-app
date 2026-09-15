@@ -501,6 +501,76 @@ function intakeBlock() {
     <div style="margin-top:10px">${dz}</div>`;
 }
 
+/**
+ * Changes waiting to go back to Jira.
+ *
+ * Shown as a list of what will actually be sent, per issue and per field,
+ * rather than a count. "12 changes" is not something anyone can check before
+ * pressing a button that writes to a live tracker.
+ */
+function pushCard() {
+  const pend = JM.pendingTasks();
+  const failed = S.get().tasks.filter(t => t.pushError);
+
+  if (!pend.length && !failed.length) {
+    return h`
+    <section class="card">
+      <header>${icon('up')}<h3>Changes to Jira</h3>
+        <div class="spacer" style="flex:1"></div><span class="chip">nothing waiting</span>
+      </header>
+      <div class="body"><p class="tiny mute">Edit a mirrored issue here — its status, summary,
+        estimate, assignee, dates, priority or labels — and the change is listed here, ready to send.
+        Nothing leaves this machine until you press the button.</p></div>
+    </section>`;
+  }
+
+  const row = t => {
+    const d = JM.pendingOf(t) || {};
+    const bits = Object.entries(d).map(([k, v]) => {
+      const was = k === 'status' ? t.base.jiraStatus
+        : k === 'priority' ? t.base.jiraPriority
+        : k === 'summary' ? t.base.summary
+        : k === 'originalEstimate' ? t.base.originalEstimate
+        : k === 'duedate' ? t.base.due
+        : k === 'startdate' ? t.base.start
+        : k === 'labels' ? (t.base.labels || []).join(', ')
+        : k === 'assignee' ? (t.base.assigneeAccountId ? 'someone' : 'unassigned')
+        : '';
+      const now = Array.isArray(v) ? v.join(', ') : (v === null ? 'cleared' : String(v));
+      return `<div class="tiny" style="margin-left:10px">
+        <span class="mute">${esc(k)}</span>
+        ${was ? `<span class="mute"> ${esc(String(was))} →</span>` : ''}
+        <b>${esc(now.length > 60 ? now.slice(0, 60) + '…' : now)}</b></div>`;
+    }).join('');
+    return `<div style="padding:6px 0;border-bottom:1px solid var(--line,#eee)">
+      <div class="tiny"><b>${esc(t.jiraKey)}</b> <span class="mute">${esc(t.title.slice(0, 54))}</span></div>
+      ${bits}
+      ${t.pushError ? `<div class="tiny" style="margin-left:10px;color:var(--risk,#C4314B)">${esc(t.pushError)}</div>` : ''}
+    </div>`;
+  };
+
+  return h`
+  <section class="card">
+    <header>${icon('up')}<h3>Changes to Jira</h3>
+      <div class="spacer" style="flex:1"></div>
+      <span class="chip ${failed.length ? 'risk' : 'warn'}">${pend.length} waiting${failed.length ? `, ${failed.length} failed` : ''}</span>
+    </header>
+    <div class="body">
+      <div style="max-height:260px;overflow:auto">${raw(pend.map(row).join(''))}</div>
+      <div class="row wrap" style="margin-top:12px;gap:8px">
+        <button class="btn primary sm" data-act="push-changes">${icon('up')}Send ${pend.length} change${pend.length === 1 ? '' : 's'} to Jira</button>
+        <button class="btn sm" data-act="push-result">Read result…</button>
+        <div class="spacer" style="flex:1"></div>
+        <button class="btn sm subtle" data-act="push-discard">Discard</button>
+      </div>
+      <p class="tiny mute" style="margin-top:8px">Only the fields listed are sent, so a colleague's
+        edit in Jira since your last pull is not overwritten. Status moves by workflow transition —
+        if the workflow does not allow it from where the issue is, the helper says so instead of
+        reporting success.</p>
+    </div>
+  </section>`;
+}
+
 /** What the last pull actually brought in, and the two destructive buttons. */
 function mirrorCard() {
   const m = JM.mirror();
@@ -1244,7 +1314,7 @@ export default {
       you:      () => two([profileCard()], [appearanceCard()]),
       org:      () => two([divisionsCard(), rateCardSection()], [workCard(), linksCard()]),
       connect:  () => two([graphCard(), foldersCard()], [jiraCard(), bridgeCard()]),
-      jira:     () => two([masterFilterCard()], [mirrorCard()]),
+      jira:     () => two([masterFilterCard()], [mirrorCard(), pushCard()]),
       backup:   () => two([folderCard(), dataCard()], [cloudCard()]),
       security: () => one([securityCard()]),
       about:    () => one([aboutCard()]),
@@ -1335,6 +1405,55 @@ export default {
         }
       },
       'mirror-unbind': async () => { await JM.unbindFolder(); toast('Folder unlinked', 'ok'); ctx.rerender(); },
+
+      /* ---- Jira mirror: pushing edits back ---- */
+      'push-changes': async () => {
+        const n = JM.pendingCount();
+        if (!n) return toast('Nothing to send.', 'ok');
+        /* Writing to a live tracker other people read is not an undo-able
+           local edit, so it is confirmed every time regardless of count. */
+        const go = await confirmDlg(
+          `Send ${n} change${n === 1 ? '' : 's'} to Jira? This edits live issues that your team sees. `
+          + `The file goes to Downloads and the local helper files it within about 15 seconds if `
+          + `auto-push is on; otherwise run tools\\jira-apply.ps1.`,
+          { title: 'Send changes to Jira', ok: `Send ${n}`, danger: false });
+        if (!go) return;
+        download(JM.CHANGES_FILE, JM.buildChanges(), 'application/json');
+        toast(`${JM.CHANGES_FILE} saved to Downloads — the helper takes it from here`, 'ok', 9000);
+      },
+      'push-result': async () => {
+        const f = await pickFile('.json');
+        if (!f) return;
+        try {
+          const r = JM.applyChangeResult(f.text);
+          toast(`${r.applied} applied, ${r.failed} failed${r.unknown ? `, ${r.unknown} unknown` : ''}`,
+                r.failed ? 'warn' : 'ok', 9000);
+          ctx.rerender();
+        } catch (e) { toast(e.message, 'warn', 9000); }
+      },
+      'push-discard': async () => {
+        const n = JM.pendingCount();
+        const go = await confirmDlg(
+          `Discard ${n} unsent change${n === 1 ? '' : 's'}? Your edits here are rolled back to what `
+          + `Jira last said. Nothing in Jira changes.`,
+          { title: 'Discard changes', ok: 'Discard', danger: true });
+        if (!go) return;
+        S.mutate(s => {
+          for (const t of s.tasks) {
+            if (!t.base || !t.jiraKey) continue;
+            t.title = t.base.summary; t.desc = t.base.desc;
+            Object.assign(t, JM.statusPatch(t.base.jiraStatus));
+            t.jiraPriority = t.base.jiraPriority;
+            t.originalEstimate = t.base.originalEstimate;
+            t.due = t.base.due; t.start = t.base.start;
+            t.labels = [...(t.base.labels || [])];
+            t.assigneeAccountId = t.base.assigneeAccountId;
+            t.pushError = '';
+          }
+        }, { label: 'discard Jira changes' });
+        toast('Rolled back to what Jira last said', 'ok');
+        ctx.rerender();
+      },
 
       /* Prefer the linked folder; fall back to the picker only when there is
          no other way in. */

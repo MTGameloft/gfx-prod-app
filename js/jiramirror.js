@@ -403,6 +403,7 @@ export function importMirror(text, { keepLocal = true } = {}) {
 
         assignee: personFor(i['Assignee'], s),
         assigneeName: i['Assignee']?.displayName || '',
+        assigneeAccountId: i['Assignee']?.accountId || '',
         reporterName: i['Reporter']?.displayName || '',
 
         labels: i['Labels'] || [],
@@ -441,7 +442,27 @@ export function importMirror(text, { keepLocal = true } = {}) {
         objectiveId: '',
         checklist: [],
       };
-    });
+    }).map(r => ({
+      /*
+       * A copy of what Jira said, frozen at import.
+       *
+       * Every edit is then a diff against this rather than a flag someone has
+       * to remember to set. That matters because tasks are edited from several
+       * places — the dialog, a drag between lanes, a tick in the list — and a
+       * "dirty" flag set in one of them is a bug waiting in the other two.
+       * Re-importing rewrites the baseline, which is exactly right: once Jira
+       * agrees with you, there is nothing left to push.
+       */
+      ...r,
+      base: {
+        summary: r.title, desc: r.desc,
+        jiraStatus: r.jiraStatus, jiraPriority: r.jiraPriority,
+        assigneeAccountId: r.assigneeAccountId,
+        originalEstimate: r.originalEstimate,
+        due: r.due, start: r.start,
+        labels: [...(r.labels || [])],
+      },
+    }));
 
     created = rows.length;
     s.tasks = [...rows, ...local];
@@ -455,6 +476,131 @@ export function importMirror(text, { keepLocal = true } = {}) {
     statuses: (m.statuses || []).length,
     pulledAt: m.pulledAt,
   };
+}
+
+/* ---------- pushing edits back ------------------------------------------
+ *
+ * The mirror was read-only: you could change an issue here and Jira would
+ * never hear about it. This closes that, using the route that already works —
+ * the app writes a file, the local helper holds the credential and calls Jira.
+ *
+ * WHAT IS PUSHED IS A DIFF, NOT A SNAPSHOT. Only fields that differ from
+ * `base` are sent. Sending the whole issue back would overwrite anything a
+ * colleague changed in Jira since the pull, silently, every single time.
+ *
+ * STATUS IS NOT A FIELD. Jira moves an issue by transition, and which
+ * transitions exist depends on where the issue currently is, so the helper
+ * looks them up per issue and reports honestly when the workflow does not
+ * allow the move rather than pretending it happened.
+ */
+
+export const CHANGES_FILE = 'gfx-jira-changes.json';
+
+const sameList = (a = [], b = []) =>
+  a.length === b.length && a.every((x, i) => x === b[i]);
+
+/**
+ * What has changed on one task since it was mirrored.
+ * @returns {object|null} a field→value map, or null when nothing differs.
+ */
+export function pendingOf(t) {
+  if (!t?.jiraKey || !t.base) return null;
+  const b = t.base;
+  const d = {};
+  if ((t.title || '') !== (b.summary || '')) d.summary = t.title || '';
+  if ((t.desc || '') !== (b.desc || '')) d.description = t.desc || '';
+  if ((t.jiraStatus || '') !== (b.jiraStatus || '')) d.status = t.jiraStatus || '';
+  if ((t.jiraPriority || '') !== (b.jiraPriority || '')) d.priority = t.jiraPriority || '';
+  if ((t.due || '') !== (b.due || '')) d.duedate = t.due || null;
+  if ((t.start || '') !== (b.start || '')) d.startdate = t.start || null;
+  if (Number(t.originalEstimate || 0) !== Number(b.originalEstimate || 0)) {
+    d.originalEstimate = Number(t.originalEstimate || 0);
+  }
+  if (!sameList(t.labels || [], b.labels || [])) d.labels = [...(t.labels || [])];
+
+  /* Assignee travels as an accountId. The person record carries it when the
+     roster came from Jira; without one there is nothing Jira can resolve, so
+     the change is left out rather than sent as a name it would reject. */
+  const nowId = t.assignee
+    ? (S.byId(S.get().people, t.assignee)?.jiraAccountId || t.assigneeAccountId || '')
+    : '';
+  if (nowId !== (b.assigneeAccountId || '')) d.assignee = nowId || null;
+
+  return Object.keys(d).length ? d : null;
+}
+
+/** Every mirrored task with something to send. */
+export const pendingTasks = (state = S.get()) =>
+  (state.tasks || []).filter(t => pendingOf(t));
+
+export const pendingCount = () => pendingTasks().length;
+
+/** The file the local helper reads. */
+export function buildChanges() {
+  const m = mirror();
+  const items = pendingTasks().map(t => ({
+    taskId: t.id,
+    key: t.jiraKey,
+    was: {
+      status: t.base.jiraStatus, priority: t.base.jiraPriority, summary: t.base.summary,
+    },
+    fields: pendingOf(t),
+  }));
+  return JSON.stringify({
+    kind: 'jira-changes',
+    version: 1,
+    savedAt: new Date().toISOString(),
+    site: m?.site || '',
+    project: m?.project?.key || '',
+    /* Field ids the helper cannot guess, resolved here from the pulled map so
+       a different Jira site with different numbers still works. */
+    fieldIds: {
+      startdate: Object.keys(m?.fields || {}).find(k => m.fields[k] === 'Start date') || '',
+    },
+    items,
+  }, null, 2);
+}
+
+/**
+ * Read the helper's report back.
+ *
+ * A field that was applied is folded into `base`, so it stops counting as
+ * pending without waiting for the next pull. A field that failed stays
+ * pending and keeps its error, because silently dropping a change the user
+ * made is the one outcome worse than the change not landing.
+ */
+export function applyChangeResult(text) {
+  let doc;
+  try { doc = JSON.parse(text); }
+  catch (e) { throw new Error('That is not a readable result file: ' + e.message); }
+  if (doc.kind !== 'jira-changes-result' || !Array.isArray(doc.items)) {
+    throw new Error('That file is not a Jira change result from the local helper.');
+  }
+  const out = { applied: 0, failed: 0, unknown: 0, errors: [] };
+  S.mutate(s => {
+    for (const r of doc.items) {
+      const t = (s.tasks || []).find(x => x.id === r.taskId || x.jiraKey === r.key);
+      if (!t) { out.unknown++; continue; }
+      if (r.ok) {
+        out.applied++;
+        t.base = {
+          ...t.base,
+          summary: t.title, desc: t.desc,
+          jiraStatus: t.jiraStatus, jiraPriority: t.jiraPriority,
+          assigneeAccountId: t.assigneeAccountId,
+          originalEstimate: t.originalEstimate,
+          due: t.due, start: t.start,
+          labels: [...(t.labels || [])],
+        };
+        t.pushError = '';
+      } else {
+        out.failed++;
+        t.pushError = r.error || 'Jira refused the change.';
+        out.errors.push(`${r.key}: ${t.pushError}`);
+      }
+    }
+  }, { label: 'Jira change result', noUndo: true });
+  return out;
 }
 
 /* ---------- getting the file in, with as few clicks as possible ----------

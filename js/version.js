@@ -15,9 +15,9 @@
    arrived.
    ========================================================================= */
 
-export const BUILD = '2026-09-15.1';
+export const BUILD = '2026-09-15.2';
 
-export const BUILD_NOTES = 'Refreshing the Jira mirror no longer has to mean a file dialog. Link the mirror folder once — outside Teams, since browsers forbid folder access inside an embedded tab — and every later refresh is one click, with the file read straight off disk; the app also checks on open whether a newer pull is waiting and brings it in. Everywhere else, including inside Teams, you can now drag the file onto the card, which an embedded tab does allow. The picker stays as the floor. Settings names which of the three is available where you are rather than leaving you to find out by clicking.';
+export const BUILD_NOTES = 'Edits now go back to Jira. Change a mirrored issue here — its status, summary, estimate, assignee, dates, priority or labels — and Settings → Jira mirror lists exactly which fields will be sent, per issue, old value beside new. What travels is a diff, never a snapshot, so a colleague’s edit in Jira since your last pull is not quietly overwritten. Status is not sent as a field: Jira moves an issue by workflow transition, so the helper reads which transitions the issue actually allows and reports the refusal, with the list of permitted moves, rather than claiming a success it did not get. Nothing leaves the machine until you press the button and confirm.';
 
 
 
