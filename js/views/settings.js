@@ -597,7 +597,32 @@ function mirrorCard() {
           <span class="mute">Sprints</span><span>${sp.length}${act.length ? `, ${act.length} active: ${esc(act.map(x => x.name).join(', '))}` : ''}</span>
           <span class="mute">Components</span><span>${JM.components().length}</span>
           <span class="mute">Versions</span><span>${JM.versions().length}</span>
-        </div>` : `
+        </div>
+        ${(() => {
+          /* The link between the Jira project and a project in this app is
+             `jiraKey` on the project record. Without it every imported issue
+             has no project, so it is invisible on that project's own Tasks tab
+             — which looks like the import failed when it did not. */
+          const key = m.project?.key || '';
+          const pid = JM.projectIdFor(key);
+          if (pid) {
+            return `<div class="tiny" style="margin-top:8px">Shown under
+              <b>${esc(S.projectName(pid))}</b> in Project Management.</div>`;
+          }
+          const ps = S.get().projects || [];
+          return `<div class="banner warn" style="margin-top:10px">
+            <div><b>Not linked to a project here.</b> No project in this app carries the Jira key
+            <code>${esc(key)}</code>, so these issues do not appear on any project's Tasks tab —
+            only on the all-projects board. Pick the one they belong to:</div>
+          </div>
+          <div class="row wrap" style="gap:8px;margin-top:8px">
+            <select id="mirror_proj" style="max-width:240px">
+              <option value="">Choose a project…</option>
+              ${ps.map(p => `<option value="${esc(p.id)}">${esc(p.name)}${p.code ? ` (${esc(p.code)})` : ''}</option>`).join('')}
+            </select>
+            <button class="btn sm" data-act="mirror-link">Link to ${esc(key)}</button>
+          </div>`;
+        })()}` : `
         <p class="tiny">No mirror yet. Run the puller, then load the file it writes:</p>
         <pre class="tiny" style="white-space:pre-wrap;background:var(--bg2,#f6f6f8);padding:8px 10px;border-radius:6px;margin:8px 0 0">powershell -ExecutionPolicy Bypass -File tools\\jira-pull.ps1</pre>`)}
 
@@ -1405,6 +1430,23 @@ export default {
         }
       },
       'mirror-unbind': async () => { await JM.unbindFolder(); toast('Folder unlinked', 'ok'); ctx.rerender(); },
+
+      /* Write the Jira key onto the chosen project, then attach the issues
+         that are already imported — otherwise the link only takes effect at
+         the next pull, which reads as "the button did nothing". */
+      'mirror-link': () => {
+        const pid = host.querySelector('#mirror_proj')?.value;
+        if (!pid) return toast('Choose a project first.', 'warn');
+        const key = JM.mirror()?.project?.key || '';
+        let n = 0;
+        S.mutate(s => {
+          const p = s.projects.find(x => x.id === pid);
+          if (p) p.jiraKey = key;
+          for (const t of s.tasks) if (t.source === 'jira' && !t.project) { t.project = pid; n++; }
+        }, { label: 'link Jira project' });
+        toast(`${key} linked to ${S.projectName(pid)} — ${n} issue${n === 1 ? '' : 's'} attached`, 'ok', 8000);
+        ctx.rerender();
+      },
 
       /* ---- Jira mirror: pushing edits back ---- */
       'push-changes': async () => {

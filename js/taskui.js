@@ -126,7 +126,9 @@ function axis(ui) {
                  .map(st => ({ id: st.id, label: st.label, color: st.color })) };
     }
     const cat = { new: '#0F6CBD', indeterminate: '#6264A7', done: '#13A10E' };
-    return { key: 'status', of: t => t.jiraStatus,
+    // `laneKey`, not `t.jiraStatus` — local tasks have no Jira status and must
+    // still land somewhere.
+    return { key: 'status', of: t => laneKey(t),
              lanes: JM.statuses().filter(st => ui.showDone || st.category !== 'done')
                .map(st => ({ id: st.name, label: st.name, color: cat[st.category] || '#8A8886' })) };
   }
@@ -270,7 +272,13 @@ const GAP = 1000;
    so ordering has to be computed against `jiraStatus` — comparing against the
    app's `status` would put every "Blocked", "Under Review" and "Pending
    Licensor" card in one bucket and scramble their hand-set order. */
-const laneKey = t => (mirrored() ? (t.jiraStatus || '') : t.status);
+const laneKey = t => {
+  if (!mirrored()) return t.status;
+  // A task created here and not yet pushed has no Jira status. Falling back to
+  // the nearest one by category keeps it on the board instead of dropping it
+  // into a lane that does not exist.
+  return t.jiraStatus || JM.nearestJiraStatus(t.status);
+};
 
 const laneOf = (rows, status) => rows.filter(t => laneKey(t) === status)
   .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || (a.created || 0) - (b.created || 0));
@@ -409,7 +417,10 @@ function taskCard(t, ui) {
         ? `<span class="chip tiny ok" title="${esc(t.issueType || 'Issue')} — open in Jira">${esc(TYPE_GLYPH[t.issueType] || '▪')} ${esc(t.jiraKey)}</span>`
         : p ? `<span class="chip" style="background:${p.color}22;color:${p.color}">${esc(p.code)}</span>` : '')}
       ${raw(t.jiraKey ? '' : t.jira?.key ? `<span class="chip tiny ok" title="In Jira">${esc(t.jira.key)}</span>`
-            : t.jira?.state === 'queued' ? '<span class="chip tiny warn" title="Queued for Jira">queued</span>' : '')}
+            : t.jira?.state === 'queued' ? '<span class="chip tiny warn" title="Queued for Jira">queued</span>'
+            /* Only worth saying once the board is a Jira mirror: there, "not in
+               Jira" is the exception and the thing you might forget to push. */
+            : mirrored() ? '<span class="chip tiny" title="Created here — not in Jira yet">local</span>' : '')}
       ${raw(d ? `<span class="pill-div" style="background:${d.color}">${esc(d.id)}</span>` : '')}
       ${raw(t.sprint ? `<span class="chip tiny" title="Sprint">${esc(t.sprint)}</span>` : '')}
       ${raw((t.fixVersions || []).length ? `<span class="chip tiny info" title="Fix versions">${esc(t.fixVersions.join(', '))}</span>` : '')}

@@ -15,9 +15,9 @@
    arrived.
    ========================================================================= */
 
-export const BUILD = '2026-09-15.2';
+export const BUILD = '2026-09-15.3';
 
-export const BUILD_NOTES = 'Edits now go back to Jira. Change a mirrored issue here — its status, summary, estimate, assignee, dates, priority or labels — and Settings → Jira mirror lists exactly which fields will be sent, per issue, old value beside new. What travels is a diff, never a snapshot, so a colleague’s edit in Jira since your last pull is not quietly overwritten. Status is not sent as a field: Jira moves an issue by workflow transition, so the helper reads which transitions the issue actually allows and reports the refusal, with the list of permitted moves, rather than claiming a success it did not get. Nothing leaves the machine until you press the button and confirm.';
+export const BUILD_NOTES = 'Mirrored issues now belong to a project, and local tasks stop disappearing. An import set no project on anything it brought in, so every issue was invisible on its own project’s Tasks tab — the link is the Jira key on the project record, and the import now resolves it, offering to set it when nothing matches. Divisions are filled in from the same labels they are pushed out with. Separately, a task you created here and have not pushed had no Jira status, and once the lanes became Jira’s statuses it matched none of them and vanished from the board; it now falls back to the nearest lane by category and is marked "local".';
 
 
 

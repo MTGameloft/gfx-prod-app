@@ -142,6 +142,31 @@ export function statuses() {
 export const priorities  = () => mirror()?.priorities || [];
 
 /**
+ * The Jira lane a task with no Jira status belongs in.
+ *
+ * A task you created here and have not pushed has an app status and no
+ * `jiraStatus`. Once the board groups by Jira's statuses that task matches no
+ * lane at all and simply disappears — which is alarming, because the work is
+ * still there and still yours. Mapping its app status onto the nearest Jira
+ * status by category puts it on the board beside everything else, where it
+ * can be seen and pushed.
+ */
+export function nearestJiraStatus(appStatus) {
+  const all = statuses();
+  if (!all.length) return '';
+  const byName = re => all.find(s => re.test(s.name.toLowerCase()));
+  const byCat = c => all.find(s => s.category === c);
+  switch (appStatus) {
+    case 'blocked': return (byName(/block/) || byCat('indeterminate') || all[0]).name;
+    case 'review':  return (byName(/review|licensor/) || byCat('indeterminate') || all[0]).name;
+    case 'doing':   return (byName(/progress|doing/) || byCat('indeterminate') || all[0]).name;
+    case 'done':    return (byCat('done') || all[all.length - 1]).name;
+    case 'backlog': return (byName(/backlog/) || byCat('new') || all[0]).name;
+    default:        return (byCat('new') || all[0]).name;
+  }
+}
+
+/**
  * Priorities worth offering in a drop-down.
  *
  * `/rest/api/3/priority` is a SITE-wide list — 74 entries here — and a picker
@@ -325,6 +350,50 @@ function personFor(user, s) {
   return id;
 }
 
+/**
+ * Which project in THIS app the mirrored issues belong to.
+ *
+ * The link is `jiraKey` on the project record — the same field jira.js already
+ * uses to decide where a task gets filed, so one setting drives both
+ * directions. Falling back to the project's code or name means a project
+ * someone sensibly named after the Jira key works without a second step.
+ *
+ * Returns '' when nothing matches, and the Mirror card says so: leaving every
+ * imported task with no project is why they would be invisible on a project's
+ * own Tasks tab, which filters on exactly this field.
+ */
+export function projectIdFor(key, state = S.get()) {
+  if (!key) return '';
+  const k = String(key).toLowerCase();
+  const ps = state.projects || [];
+  return (ps.find(p => (p.jiraKey || '').toLowerCase() === k)
+       || ps.find(p => (p.code || '').toLowerCase() === k)
+       || ps.find(p => (p.name || '').toLowerCase() === k)
+       || {}).id || '';
+}
+
+/**
+ * Which division an issue belongs to, from its labels.
+ *
+ * Divisions already carry the `jiraLabel` they push INTO Jira; this reads the
+ * same mapping backwards. Longest label first, so `GFX-Prod` is not shadowed
+ * by a shorter one, and a match must be the whole label or the label followed
+ * by a separator — otherwise `3D` would claim `3D-Env` and `2D` alike by
+ * accident rather than by rule.
+ */
+export function divisionFor(labels = [], comps = [], state = S.get()) {
+  const divs = (state.divisions || []).filter(d => d.jiraLabel)
+    .sort((a, b) => b.jiraLabel.length - a.jiraLabel.length);
+  for (const v of [...labels, ...comps]) {
+    const lv = String(v).toLowerCase();
+    for (const d of divs) {
+      const jl = d.jiraLabel.toLowerCase();
+      if (lv === jl || lv.startsWith(jl + '_') || lv.startsWith(jl + '-')) return d.id;
+    }
+  }
+  return '';
+}
+
 /** Which sprint is "the" sprint for an issue: the last non-closed one wins. */
 function currentSprint(names, all) {
   if (!names || !names.length) return '';
@@ -354,6 +423,7 @@ export function importMirror(text, { keepLocal = true } = {}) {
   const all = m.sprints || [];
 
   let created = 0;
+  let linkedTo = '';
   S.mutate(s => {
     s.jira = s.jira || {};
     s.jira.mirror = {
@@ -377,6 +447,11 @@ export function importMirror(text, { keepLocal = true } = {}) {
     };
 
     const local = keepLocal ? s.tasks.filter(t => !t.jiraKey && t.source !== 'jira') : [];
+
+    /* Resolve once, outside the loop — it is the same answer for every issue
+       and it is what makes them visible on the project's own Tasks tab. */
+    const projId = projectIdFor(m.project?.key, s);
+    linkedTo = projId;
 
     const rows = kept.map((i, n) => {
       const sprint = currentSprint(i['Sprint'], all);
@@ -438,7 +513,11 @@ export function importMirror(text, { keepLocal = true } = {}) {
         created: Date.parse(i['Created']) || Date.now(),
         updated: Date.parse(i['Updated']) || Date.now(),
         order: n,
-        division: '',
+        /* Without these two a mirrored issue is invisible everywhere except
+           the all-projects board: a project's Tasks tab filters on `project`,
+           and every division filter reads `division`. */
+        project: projId,
+        division: divisionFor(i['Labels'] || [], i['Components'] || [], s),
         objectiveId: '',
         checklist: [],
       };
@@ -475,6 +554,9 @@ export function importMirror(text, { keepLocal = true } = {}) {
     sprints: all.length,
     statuses: (m.statuses || []).length,
     pulledAt: m.pulledAt,
+    projectId: linkedTo,
+    projectName: linkedTo ? S.projectName(linkedTo) : '',
+    jiraKey: m.project?.key || '',
   };
 }
 
