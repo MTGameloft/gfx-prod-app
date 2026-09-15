@@ -76,6 +76,7 @@ let cleanup = null;
   initLocal().then(watchForNewerFolderBackup);
   watchForNewerBuild();
   initBridge();
+  watchForNewerMirror();
 
   renderNav();
   wireChrome();
@@ -267,6 +268,28 @@ function watchForNewerBuild() {
 }
 
 /** The folder equivalent, plus the one-click permission re-grant. */
+/**
+ * If the Jira mirror folder is linked and the file on disk is newer than what
+ * was last imported, bring it in on open.
+ *
+ * Silent when there is nothing to do, and it never prompts: `restoreFolder`
+ * only recovers a handle that was already granted, and a lapsed permission
+ * simply makes this a no-op rather than throwing a dialog at someone who was
+ * opening the app to look at something else. Linking the folder is possible
+ * only outside a Teams tab, so in Teams this does nothing at all.
+ */
+async function watchForNewerMirror() {
+  try {
+    const JM = await import('./jiramirror.js');
+    if (!await JM.restoreFolder()) return;
+    if (!await JM.folderHasNewer()) return;
+    const r = await JM.refreshFromFolder();
+    if (!r) return;
+    toast(`Jira mirror updated — ${r.kept} issue${r.kept === 1 ? '' : 's'}`, 'ok', 6000);
+    S.notify('jira-mirror');
+  } catch { /* no folder, no permission, no file: all fine, stay quiet */ }
+}
+
 function watchForNewerFolderBackup() {
   onLocalChange(l => {
     if (l.status === 'needs-reconnect' && !$('#folderReconnect')) {

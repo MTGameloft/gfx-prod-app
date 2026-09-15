@@ -455,6 +455,52 @@ function masterFilterCard() {
   </section>`;
 }
 
+/**
+ * How the file gets in, and what this environment allows.
+ *
+ * Stated rather than discovered: in Edge the folder can be linked once and
+ * every later refresh is one click, and in a Teams tab it cannot, because
+ * Chromium blocks folder access inside a cross-origin iframe. Saying which
+ * one you are in beats letting someone click a button that cannot work.
+ */
+function intakeBlock() {
+  const cap = JM.intake();
+  const bound = JM.boundFolder();
+
+  const dz = `<div class="drop-mirror" data-drop="mirror"
+        style="border:1.5px dashed var(--line,#d6d6de);border-radius:8px;padding:12px;text-align:center;
+               font-size:11.5px;color:var(--text-dim);cursor:default">
+      Drag <code>${esc(JM.MIRROR_FILE)}</code> here${cap.framed ? '' : ', or use the button below'}
+    </div>`;
+
+  if (cap.canBindFolder) {
+    return `
+      ${bound ? `
+        <div class="banner ok" style="margin-top:12px">
+          <div><b>Folder linked:</b> <code>${esc(bound)}</code>. Refresh reads
+          <code>${esc(JM.MIRROR_FILE)}</code> straight from it — no dialog.</div>
+        </div>
+        <div class="row wrap" style="gap:8px;margin-top:8px">
+          <button class="btn sm subtle" data-act="mirror-unbind">Unlink folder</button>
+        </div>`
+        : `
+        <div class="banner" style="margin-top:12px">
+          <div><b>Link the mirror folder once</b> and every refresh after that is a single click,
+          with no file dialog.</div>
+        </div>
+        <div class="row wrap" style="gap:8px;margin-top:8px">
+          <button class="btn sm" data-act="mirror-bind">${icon('folder')}Link the mirror folder…</button>
+        </div>`}
+      <div style="margin-top:10px">${dz}</div>`;
+  }
+
+  return `
+    <div class="banner" style="margin-top:12px">
+      <div><b>No dialog-free refresh here.</b> ${esc(cap.why)}</div>
+    </div>
+    <div style="margin-top:10px">${dz}</div>`;
+}
+
 /** What the last pull actually brought in, and the two destructive buttons. */
 function mirrorCard() {
   const m = JM.mirror();
@@ -485,7 +531,9 @@ function mirrorCard() {
         <p class="tiny">No mirror yet. Run the puller, then load the file it writes:</p>
         <pre class="tiny" style="white-space:pre-wrap;background:var(--bg2,#f6f6f8);padding:8px 10px;border-radius:6px;margin:8px 0 0">powershell -ExecutionPolicy Bypass -File tools\\jira-pull.ps1</pre>`)}
 
-      <div class="row wrap" style="margin-top:14px;gap:8px">
+      ${raw(intakeBlock())}
+
+      <div class="row wrap" style="margin-top:12px;gap:8px">
         <button class="btn primary sm" data-act="mirror-load">${icon('refresh')}Refresh from Jira</button>
         <div class="spacer" style="flex:1"></div>
         <button class="btn sm danger" data-act="tasks-clear">Delete all tasks</button>
@@ -1205,6 +1253,40 @@ export default {
     host.innerHTML = tabsBar + `<div class="tiny mute" style="margin:-4px 0 12px">${esc(meta.sub)}</div>`
       + PANES[tab]();
 
+    /*
+     * Drag the mirror file onto the card.
+     *
+     * This is the one route into the app that survives a Teams tab: an iframe
+     * may not open a folder picker, but it may receive a drop. It is also
+     * fewer actions than the file dialog everywhere else, so it is offered
+     * regardless of environment rather than only as a fallback.
+     */
+    if (tab === 'jira') {
+      // restore a previously linked folder, then redraw if that changed anything
+      JM.restoreFolder().then(name => { if (name && !host.querySelector('[data-act="mirror-unbind"]')) ctx.rerender(); });
+
+      const zone = host.querySelector('[data-drop="mirror"]');
+      if (zone) {
+        const lit = on => { zone.style.borderColor = on ? 'var(--accent,#6264A7)' : 'var(--line,#d6d6de)'; };
+        zone.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; lit(true); });
+        zone.addEventListener('dragleave', () => lit(false));
+        zone.addEventListener('drop', async e => {
+          e.preventDefault(); lit(false);
+          const file = e.dataTransfer?.files?.[0];
+          if (!file) return;
+          if (!/\.json$/i.test(file.name)) return toast('That is not a .json file.', 'warn');
+          try {
+            const r = JM.importMirror(await file.text());
+            toast(`${r.kept} issue${r.kept === 1 ? '' : 's'} in, ${r.skipped} filtered out `
+                + `(${r.statuses} statuses, ${r.sprints} sprints)`, 'ok', 9000);
+            ctx.rerender();
+          } catch (err) {
+            toast(err.message || 'That file could not be read.', 'warn', 9000);
+          }
+        });
+      }
+    }
+
     const setPref = (patch, redraw = true) => {
       S.mutate(s => Object.assign(s.prefs, patch), { noUndo: true, silent: true });
       applyPrefs();
@@ -1240,7 +1322,33 @@ export default {
       },
 
       /* ---- Jira mirror: load and clear ---- */
+      'mirror-bind': async () => {
+        try {
+          const name = await JM.bindFolder();
+          toast(`Linked ${name}. Refresh now reads the file directly.`, 'ok', 7000);
+          const r = await JM.refreshFromFolder();
+          if (r) toast(`${r.kept} issue${r.kept === 1 ? '' : 's'} loaded`, 'ok', 6000);
+          ctx.rerender();
+        } catch (e) {
+          // AbortError just means the picker was dismissed — not worth a toast.
+          if (e?.name !== 'AbortError') toast(e.message || 'That folder could not be linked.', 'warn', 9000);
+        }
+      },
+      'mirror-unbind': async () => { await JM.unbindFolder(); toast('Folder unlinked', 'ok'); ctx.rerender(); },
+
+      /* Prefer the linked folder; fall back to the picker only when there is
+         no other way in. */
       'mirror-load': async () => {
+        try {
+          const direct = await JM.refreshFromFolder();
+          if (direct) {
+            toast(`${direct.kept} issue${direct.kept === 1 ? '' : 's'} in, ${direct.skipped} filtered out `
+                + `(${direct.statuses} statuses, ${direct.sprints} sprints)`, 'ok', 9000);
+            return ctx.rerender();
+          }
+        } catch (e) {
+          toast(`Could not read ${JM.MIRROR_FILE} from the linked folder — ${e.message}`, 'warn', 9000);
+        }
         const f = await pickFile('.json');
         if (!f) return;
         try {

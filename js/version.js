@@ -15,9 +15,9 @@
    arrived.
    ========================================================================= */
 
-export const BUILD = '2026-09-14.2';
+export const BUILD = '2026-09-15.1';
 
-export const BUILD_NOTES = 'The Master Filter now lists everything you can choose from, rather than only what you had already chosen. Unticking a component used to remove it from the list it came from, so it vanished with no way to tick it back; the list is now a catalogue that only ever grows. Labels come from a scan of every issue in the project instead of only the ones already imported — 43 rather than 22 here — which is what makes it possible to widen the filter to a label you do not yet have, not only narrow it.';
+export const BUILD_NOTES = 'Refreshing the Jira mirror no longer has to mean a file dialog. Link the mirror folder once — outside Teams, since browsers forbid folder access inside an embedded tab — and every later refresh is one click, with the file read straight off disk; the app also checks on open whether a newer pull is waiting and brings it in. Everywhere else, including inside Teams, you can now drag the file onto the card, which an embedded tab does allow. The picker stays as the floor. Settings names which of the three is available where you are rather than leaving you to find out by clicking.';
 
 
 

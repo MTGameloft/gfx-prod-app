@@ -457,6 +457,147 @@ export function importMirror(text, { keepLocal = true } = {}) {
   };
 }
 
+/* ---------- getting the file in, with as few clicks as possible ----------
+ *
+ * Three routes, best first. Which ones exist depends on where the app is
+ * running, so `intake()` MEASURES rather than assuming.
+ *
+ *   1. A remembered folder (File System Access API). Pick it once, then every
+ *      later refresh is a single click with no dialog — and the app can check
+ *      on open whether the file is newer. Chromium blocks this API inside a
+ *      cross-origin iframe, which is exactly what a Teams tab is, so this
+ *      route exists in Edge and not in Teams.
+ *   2. Drag the file onto the card. Works everywhere, iframes included.
+ *   3. The file picker. Always available; the floor, not the goal.
+ *
+ * There is no fourth route. A page cannot read a path it was simply told
+ * about: every one of these needs the person to have pointed at the file at
+ * least once. That is the browser's rule about disk access, not a gap here.
+ */
+
+const FS_DB = 'gfxprod.fs';
+const FS_STORE = 'handles';
+const FS_KEY = 'jiraMirrorDir';
+export const MIRROR_FILE = 'gfx-jira-mirror.json';
+
+let dirHandle = null;
+
+function fsdb() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open(FS_DB, 1);
+    r.onupgradeneeded = () => {
+      if (!r.result.objectStoreNames.contains(FS_STORE)) r.result.createObjectStore(FS_STORE);
+    };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function fsPut(k, v) {
+  const db = await fsdb();
+  await new Promise((res, rej) => {
+    const tx = db.transaction(FS_STORE, 'readwrite');
+    tx.objectStore(FS_STORE).put(v, k);
+    tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+  });
+  db.close();
+}
+async function fsGet(k) {
+  const db = await fsdb();
+  const v = await new Promise((res, rej) => {
+    const tx = db.transaction(FS_STORE, 'readonly');
+    const q = tx.objectStore(FS_STORE).get(k);
+    q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error);
+  });
+  db.close();
+  return v;
+}
+
+/** What this environment actually allows. Measured, not guessed. */
+export function intake() {
+  const picker = typeof window.showDirectoryPicker === 'function';
+  const framed = window.top !== window.self;
+  return {
+    canBindFolder: picker && !framed && window.isSecureContext,
+    framed,
+    why: !picker
+      ? 'This browser cannot remember a folder. Edge and Chrome can; Firefox and Safari cannot.'
+      : framed
+        ? 'Browsers block folder access inside an embedded tab, and a Teams tab is one. '
+          + 'Drag the file onto this card instead, or open the app in Edge to link the folder once.'
+        : '',
+  };
+}
+
+/** Restore a previously linked folder. Safe to call on load — no prompt. */
+export async function restoreFolder() {
+  if (!intake().canBindFolder) return null;
+  try {
+    const h = await fsGet(FS_KEY);
+    if (!h) return null;
+    dirHandle = h;
+    return h.name || '';
+  } catch { return null; }
+}
+
+export const boundFolder = () => dirHandle?.name || '';
+
+/** Needs a real click — the picker throws without a user gesture. */
+export async function bindFolder() {
+  const cap = intake();
+  if (!cap.canBindFolder) throw new Error(cap.why);
+  const h = await window.showDirectoryPicker({ id: 'gfx-jira-mirror', mode: 'read' });
+  dirHandle = h;
+  await fsPut(FS_KEY, h);
+  return h.name || '';
+}
+
+export async function unbindFolder() {
+  dirHandle = null;
+  try { const db = await fsdb(); db.transaction(FS_STORE, 'readwrite').objectStore(FS_STORE).delete(FS_KEY); db.close(); } catch { /* nothing to remove */ }
+}
+
+async function ensurePermission() {
+  if (!dirHandle?.queryPermission) return true;
+  if (await dirHandle.queryPermission({ mode: 'read' }) === 'granted') return true;
+  // Permission usually lapses when the browser restarts. One click, not a re-pick.
+  return await dirHandle.requestPermission({ mode: 'read' }) === 'granted';
+}
+
+/**
+ * Read the mirror straight out of the linked folder.
+ * @returns {Promise<{text:string, modified:number}|null>} null when no folder
+ *          is linked or permission was refused.
+ */
+export async function readFromFolder() {
+  if (!dirHandle) return null;
+  if (!await ensurePermission()) return null;
+  const fh = await dirHandle.getFileHandle(MIRROR_FILE);
+  const f = await fh.getFile();
+  return { text: await f.text(), modified: f.lastModified };
+}
+
+/**
+ * One call for "refresh", whatever route is available.
+ * Returns the import result, or null when there was nothing to read.
+ */
+export async function refreshFromFolder() {
+  const got = await readFromFolder();
+  if (!got) return null;
+  const r = importMirror(got.text);
+  S.mutate(s => { (s.jira ||= {}).lastFileAt = got.modified; }, { noUndo: true, silent: true });
+  return r;
+}
+
+/** Is the file on disk newer than the last one imported? */
+export async function folderHasNewer() {
+  if (!dirHandle) return false;
+  try {
+    if (!await ensurePermission()) return false;
+    const f = await (await dirHandle.getFileHandle(MIRROR_FILE)).getFile();
+    return f.lastModified > (S.get().jira?.lastFileAt || 0);
+  } catch { return false; }
+}
+
 /** Wipe every task. Used by Settings → "Delete all tasks". */
 export function clearTasks() {
   const n = S.get().tasks.length;
