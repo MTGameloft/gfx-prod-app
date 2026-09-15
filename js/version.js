@@ -15,9 +15,9 @@
    arrived.
    ========================================================================= */
 
-export const BUILD = '2026-09-15.4';
+export const BUILD = '2026-09-15.5';
 
-export const BUILD_NOTES = 'The work breakdown takes custom items, and presets stop being source code. "Add work items" now has a custom row — division, name, base ETA, quantity — which adds a line straight to the estimate; a line already carries its own name and hours, so a one-off needs no catalogue entry and the catalogue does not fill up with them. Tick the box when it is worth keeping. The four presets were a const inside the view, so adding one meant editing a published app; they are data now, listed on the Catalogue screen where they can be renamed and deleted, and any breakdown on the Calculator can be kept with Save as preset. A preset whose lines no longer match a catalogue item says so, rather than quietly coming in light.';
+export const BUILD_NOTES = '"Add this item" now adds the item. It used to hold the custom line back until you closed the dialog with Add selected, so pressing it cleared the form and did nothing you could see — and a ticked "also add it to the catalogue" wrote no catalogue entry at all unless you happened to leave the right way. It commits on the spot now: the line joins the breakdown, the catalogue entry is written, and what you added is listed back to you as chips. Because that can no longer be undone by Cancel, Cancel becomes Close once anything has been added, rather than offering an undo it would not honour. The button is red.';
 
 
 

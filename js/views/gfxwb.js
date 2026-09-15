@@ -570,8 +570,16 @@ function csvLog() {
  */
 function presetsCard() {
   const ps = wbPresets();
-  const names = new Set(wbItems().map(i => `${i.division} ${i.name}`));
-  const missingIn = p => (p.lines || []).filter(([d, n]) => !names.has(`${d} ${n}`)).length;
+  /* A map of division → names, not one Set keyed on a joined string. Any
+     separator can appear in a work item name, and the obvious "impossible"
+     one — a NUL — is worse than useless: it makes the source file itself
+     binary to grep, diff and every other text tool. */
+  const byDiv = new Map();
+  for (const i of wbItems()) {
+    if (!byDiv.has(i.division)) byDiv.set(i.division, new Set());
+    byDiv.get(i.division).add(i.name);
+  }
+  const missingIn = p => (p.lines || []).filter(([d, n]) => !byDiv.get(d)?.has(n)).length;
 
   return `
   <section class="card" style="margin-bottom:12px">
@@ -781,10 +789,11 @@ async function addLineDialog() {
             <input type="checkbox" id="cu_save">
             <span>Also add it to the catalogue, so it is on this list next time</span></label>
           <div style="grid-column:span 4;text-align:right">
-            <button type="button" class="btn sm" id="cu_add">Add this item</button></div>
+            <button type="button" class="btn sm primary" id="cu_add">Add this item</button></div>
           <div class="tiny mute" style="grid-column:span 12" id="cu_msg">
             Base ETA is one artist, normal complexity, one of the thing — the same
             basis as every catalogue item.</div>
+          <div style="grid-column:span 12" id="cu_added"></div>
         </div>
       </details>
       <div class="wb-pick">${groups.map(g => `
@@ -805,32 +814,74 @@ async function addLineDialog() {
              <button class="btn" data-no>Cancel</button>
              <button class="btn primary" data-ok>Add selected</button>`,
     onMount: ({ root, close }) => {
-      /* Custom lines are collected here and handed back with the ticked ids,
-         so one press of "Add selected" adds both. Closing the dialog without
-         it throws them away, which is what Cancel should mean. */
-      const custom = [];
+      /*
+       * "Add this item" ADDS THE ITEM.
+       *
+       * It used to stage one and commit on "Add selected", which meant the
+       * button cleared the form and did nothing you could see — and a ticked
+       * "add to the catalogue" produced no catalogue entry until the dialog
+       * was closed the one right way. A button named "Add this item" that
+       * only sometimes adds the item is worse than no button.
+       *
+       * So it commits on the spot: the line goes into the breakdown and the
+       * catalogue entry is written now. Because that cannot then be undone by
+       * Cancel, Cancel becomes "Close" the moment anything has been committed
+       * — rather than offering an undo it will not honour.
+       */
+      const added = [];
       const count = () => {
-        const n = root.querySelectorAll('[data-item]:checked').length + custom.length;
+        const n = root.querySelectorAll('[data-item]:checked').length;
         root.querySelector('[data-count]').textContent =
-          n ? `${n} item${n === 1 ? '' : 's'} selected` : 'Nothing selected';
+          n ? `${n} item${n === 1 ? '' : 's'} ticked` : (added.length ? '' : 'Nothing selected');
+        if (added.length) {
+          root.querySelector('[data-count]').textContent =
+            `${added.length} custom item${added.length === 1 ? '' : 's'} added`
+            + (n ? `, ${n} ticked` : '');
+        }
+      };
+
+      const paintAdded = () => {
+        root.querySelector('#cu_added').innerHTML = added.length
+          ? `<div class="tiny" style="margin-top:6px">Added to this breakdown: ${added.map(a =>
+              `<span class="chip tiny ok">${esc(a.name)} · ${n1(a.baseHours)}h${a.qty > 1 ? ` ×${a.qty}` : ''}${a.save ? ' · in catalogue' : ''}</span>`
+            ).join(' ')}</div>`
+          : '';
       };
 
       root.querySelector('#cu_add').onclick = () => {
-        const name = root.querySelector('#cu_name').value.trim();
+        const nameEl = root.querySelector('#cu_name');
+        const name = nameEl.value.trim();
         const hours = Number(root.querySelector('#cu_hours').value);
         const qty = Math.max(1, Math.round(Number(root.querySelector('#cu_qty').value) || 1));
         const division = root.querySelector('#cu_div').value;
+        const save = root.querySelector('#cu_save').checked;
         const msg = root.querySelector('#cu_msg');
-        if (!name) { root.querySelector('#cu_name').focus(); msg.textContent = 'Give it a name first.'; return; }
-        if (!(hours >= 0)) { root.querySelector('#cu_hours').focus(); msg.textContent = 'Base ETA must be a number.'; return; }
-        custom.push({ division, name, baseHours: hours, qty, save: root.querySelector('#cu_save').checked });
-        msg.textContent = `Added: ${custom.map(c => c.name).join(', ')}`;
-        root.querySelector('#cu_name').value = '';
+        if (!name) { nameEl.focus(); msg.textContent = 'Give it a name first.'; return; }
+        if (!Number.isFinite(hours) || hours < 0) {
+          root.querySelector('#cu_hours').focus(); msg.textContent = 'Base ETA must be a number.'; return;
+        }
+
+        draft.lines.push(newLine('', {
+          division, name, baseHours: hours, qty, seniority: defaultSeniority(division),
+        }));
+        if (save) saveItem({ division, name, hours, active: true });
+        dirty = true;
+        added.push({ division, name, baseHours: hours, qty, save });
+
+        msg.textContent = save
+          ? 'Added to the breakdown, and saved to the catalogue.'
+          : 'Added to the breakdown. Tick the box to keep it in the catalogue too.';
+        nameEl.value = '';
         root.querySelector('#cu_hours').value = '1';
         root.querySelector('#cu_qty').value = '1';
         root.querySelector('#cu_save').checked = false;
-        root.querySelector('#cu_name').focus();
+        nameEl.focus();
+        paintAdded();
         count();
+
+        // Cancel no longer undoes anything, so stop calling it Cancel.
+        const no = root.querySelector('[data-no]');
+        if (no) no.textContent = 'Close';
       };
       root.addEventListener('change', count);
       root.querySelectorAll('[data-all]').forEach(b => b.onclick = () => {
@@ -840,34 +891,25 @@ async function addLineDialog() {
         boxes.forEach(x => { x.checked = on; });
         count();
       });
-      root.querySelector('[data-no]').onclick = () => close();
+      root.querySelector('[data-no]').onclick = () => close({ ids: [], added: added.length });
       root.querySelector('[data-ok]').onclick = () => close({
         ids: [...root.querySelectorAll('[data-item]:checked')].map(x => x.dataset.item),
-        custom,
+        added: added.length,
       });
     },
   });
 
   if (!res) return false;
-  const { ids = [], custom = [] } = res;
-  if (!ids.length && !custom.length) return false;
+  const { ids = [], added = 0 } = res;
 
+  /* Custom items are already in `draft.lines` — they were committed as they
+     were added. Only the ticked catalogue items are left to do. */
   for (const id of ids) draft.lines.push(newLine(id));
+  if (ids.length) dirty = true;
 
-  for (const c of custom) {
-    /* No itemId: this line is not backed by the catalogue and does not need to
-       be. `estimate()` reads baseHours off the line itself. */
-    draft.lines.push(newLine('', {
-      division: c.division, name: c.name, baseHours: c.baseHours, qty: c.qty,
-      seniority: defaultSeniority(c.division),
-    }));
-    if (c.save) saveItem({ division: c.division, name: c.name, hours: c.baseHours, active: true });
-  }
-
-  dirty = true;
-  const n = ids.length + custom.length;
-  const kept = custom.filter(c => c.save).length;
-  toast(`${n} line${n === 1 ? '' : 's'} added${kept ? `, ${kept} saved to the catalogue` : ''}`, 'ok');
+  const n = ids.length + added;
+  if (!n) return false;
+  toast(`${n} line${n === 1 ? '' : 's'} added`, 'ok');
   return true;
 }
 
