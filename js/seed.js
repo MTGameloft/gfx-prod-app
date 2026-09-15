@@ -627,6 +627,53 @@ export function seed() {
 
     /* Saved work-breakdown estimates. Empty on purpose: an estimate is
        something you make about a real deliverable. */
+    /*
+     * Preset breakdowns — a common deliverable as a starting set of lines.
+     *
+     * These lived as a `const PRESETS` inside views/gfxwb.js, which meant the
+     * only way to add one, retire one or fix a quantity was to edit the source
+     * of a published app. They are a producer's working assumptions, which
+     * change with the pipeline, so they belong in state where the Catalogue
+     * screen can manage them — the same lesson as divisions and rate cards.
+     *
+     * A line is [division id, work item name, quantity]. Names are matched
+     * against the catalogue on apply, and anything missing is reported rather
+     * than silently dropped.
+     */
+    wbPresets: [
+      { id: 'wbp_env3d', label: '3D Environment — Exterior',
+        lines: [['PROD', 'Information Alignment', 1], ['2D', '2D References', 3],
+                ['2D', 'Visual Design Planning', 1], ['2D', 'Top Down Layout Sketch', 1],
+                ['2D', 'Turnaround', 5], ['2D', 'Material Description & Notes', 5],
+                ['2D', '2D Miscellaneous', 1], ['3D', '3D References', 1],
+                ['3D', '3D Blocking Environment', 1], ['3D', 'Modelling — Lowpoly', 20],
+                ['3D', 'Texturing', 1], ['3D', 'UV Unwrapping', 1], ['3D', '3D Implementation', 1],
+                ['ANIM', 'Ani Miscellaneous', 1], ['VFX', 'VFX Miscellaneous', 1],
+                ['PROD', 'Information Alignment', 4], ['PROD', 'Quality Assurance', 4]] },
+      { id: 'wbp_char', label: 'Character — hero, full pipeline',
+        lines: [['PROD', 'Information Alignment', 1], ['2D', '2D References', 2],
+                ['2D', 'Design Exploration (1x Silhouette)', 10], ['2D', 'Design Refinement (1x Silhouette)', 4],
+                ['2D', 'Turnaround', 1], ['2D', '3/4 View — Rendered', 1],
+                ['2D', 'Expression Sketches', 4], ['3D', '3D Blocking Character', 1],
+                ['3D', 'Sculpting — Highpoly', 1], ['3D', 'Retopology', 1], ['3D', 'Modelling — Lowpoly', 1],
+                ['3D', 'UV Unwrapping', 1], ['3D', 'Texturing', 1], ['ANIM', 'Rigging', 1],
+                ['ANIM', 'Skinning', 1], ['ANIM', 'Animation', 4], ['VFX', 'VFX Creation', 2],
+                ['PROD', 'Feedback', 6], ['PROD', 'Quality Assurance', 2]] },
+      { id: 'wbp_minigame', label: 'Minigame — art pass',
+        lines: [['PROD', 'Information Alignment', 2], ['2D', 'Mood Concept', 1],
+                ['2D', 'Fakescreen', 2], ['UIUX', 'Wireframe / Flow', 2], ['UIUX', 'UI Mockup — Screen', 3],
+                ['UIUX', 'Icon Set (10)', 1], ['UIUX', 'UI Implementation', 2],
+                ['2D', 'Graphic Asset Rendered', 8], ['VFX', 'VFX Creation', 4],
+                ['PROD', 'Feedback', 4], ['PROD', 'Quality Assurance', 2]] },
+      { id: 'wbp_seasonal', label: 'Seasonal event — content drop',
+        lines: [['PROD', 'Information Alignment', 2], ['2D', 'Mood Concept', 1],
+                ['2D', 'Graphic Asset Concept Sketch', 12], ['2D', 'Graphic Asset Rendered', 12],
+                ['3D', 'Modelling — Lowpoly', 8], ['3D', 'Texturing', 8],
+                ['ANIM', 'Animation', 4], ['VFX', 'VFX Creation', 6],
+                ['UIUX', 'UI Asset Rendered', 6], ['PROD', 'Feedback', 8],
+                ['PROD', 'Quality Assurance', 4], ['PROD', 'Playtesting', 2]] },
+    ],
+
     wbEstimates: [],
 
     /*

@@ -27,6 +27,7 @@ import {
   wbItems, wbItem, itemsByDivision, wbEstimates, wbEstimate, newEstimate, newLine,
   estimate, feasibility, rollUp, saveEstimate, removeEstimate, saveItem, removeItem,
   estimateToTasks, crewOf, logEstimate, unlogEstimate, isLogged, logRollUp,
+  wbPresets, wbPreset, savePreset, removePreset, linesToPreset,
 } from '../wb.js';
 
 const TABS = [
@@ -154,7 +155,8 @@ function calcTab(ctx) {
       <span class="sub">${r.lines.length} line${r.lines.length === 1 ? '' : 's'} · base × complexity × quantity × approach</span>
       <div class="spacer" style="flex:1"></div>
       <button class="btn sm primary" data-act="add-line">${icon('plus')}Add work item</button>
-      <button class="btn sm subtle" data-act="add-preset">Preset…</button>
+      <button class="btn sm subtle" data-act="add-preset"${wbPresets().length ? '' : ' disabled title="No presets yet — build a breakdown and use Save as preset"'}>Preset…</button>
+      ${raw(r.lines.length ? '<button class="btn sm subtle" data-act="save-preset" title="Keep this breakdown as a reusable preset">Save as preset</button>' : '')}
       ${raw(r.lines.length ? '<button class="btn sm subtle" data-act="clear-lines">Clear</button>' : '')}
       <button class="btn sm subtle" data-act="csv">${icon('down')}CSV</button></header>
     <div class="body flush"><div class="tbl-wrap"><table class="tbl">
@@ -306,42 +308,15 @@ const catDivisionOpts = () => itemsByDivision().map(g => ({
  * checked against it. These are a head start, not a template: every line is
  * editable and removable once added.
  */
-const PRESETS = [
-  { id: 'env3d', label: '3D Environment — Exterior',
-    lines: [['PROD', 'Information Alignment', 1], ['2D', '2D References', 3],
-            ['2D', 'Visual Design Planning', 1], ['2D', 'Top Down Layout Sketch', 1],
-            ['2D', 'Turnaround', 5], ['2D', 'Material Description & Notes', 5],
-            ['2D', '2D Miscellaneous', 1], ['3D', '3D References', 1],
-            ['3D', '3D Blocking Environment', 1], ['3D', 'Modelling — Lowpoly', 20],
-            ['3D', 'Texturing', 1], ['3D', 'UV Unwrapping', 1], ['3D', '3D Implementation', 1],
-            ['ANIM', 'Ani Miscellaneous', 1], ['VFX', 'VFX Miscellaneous', 1],
-            ['PROD', 'Information Alignment', 4], ['PROD', 'Quality Assurance', 4]] },
-  { id: 'char', label: 'Character — hero, full pipeline',
-    lines: [['PROD', 'Information Alignment', 1], ['2D', '2D References', 2],
-            ['2D', 'Design Exploration (1x Silhouette)', 10], ['2D', 'Design Refinement (1x Silhouette)', 4],
-            ['2D', 'Turnaround', 1], ['2D', '3/4 View — Rendered', 1],
-            ['2D', 'Expression Sketches', 4], ['3D', '3D Blocking Character', 1],
-            ['3D', 'Sculpting — Highpoly', 1], ['3D', 'Retopology', 1], ['3D', 'Modelling — Lowpoly', 1],
-            ['3D', 'UV Unwrapping', 1], ['3D', 'Texturing', 1], ['ANIM', 'Rigging', 1],
-            ['ANIM', 'Skinning', 1], ['ANIM', 'Animation', 4], ['VFX', 'VFX Creation', 2],
-            ['PROD', 'Feedback', 6], ['PROD', 'Quality Assurance', 2]] },
-  { id: 'minigame', label: 'Minigame — art pass',
-    lines: [['PROD', 'Information Alignment', 2], ['2D', 'Mood Concept', 1],
-            ['2D', 'Fakescreen', 2], ['UIUX', 'Wireframe / Flow', 2], ['UIUX', 'UI Mockup — Screen', 3],
-            ['UIUX', 'Icon Set (10)', 1], ['UIUX', 'UI Implementation', 2],
-            ['2D', 'Graphic Asset Rendered', 8], ['VFX', 'VFX Creation', 4],
-            ['PROD', 'Feedback', 4], ['PROD', 'Quality Assurance', 2]] },
-  { id: 'seasonal', label: 'Seasonal event — content drop',
-    lines: [['PROD', 'Information Alignment', 2], ['2D', 'Mood Concept', 1],
-            ['2D', 'Graphic Asset Concept Sketch', 12], ['2D', 'Graphic Asset Rendered', 12],
-            ['3D', 'Modelling — Lowpoly', 8], ['3D', 'Texturing', 8],
-            ['ANIM', 'Animation', 4], ['VFX', 'VFX Creation', 6],
-            ['UIUX', 'UI Asset Rendered', 6], ['PROD', 'Feedback', 8],
-            ['PROD', 'Quality Assurance', 4], ['PROD', 'Playtesting', 2]] },
-];
+/*
+ * Presets now come from state — see `wbPresets` in wb.js and the Catalogue
+ * screen, which is where they are added, renamed and removed. They were a
+ * const here, which made "we have a new kind of deliverable" a source edit to
+ * a published app.
+ */
 
 function applyPreset(id) {
-  const p = PRESETS.find(x => x.id === id);
+  const p = wbPreset(id);
   if (!p) return;
   const items = wbItems();
   const missing = [];
@@ -585,6 +560,52 @@ function csvLog() {
 
 /* ---------- tab 4: catalogue -------------------------------------------- */
 
+/**
+ * Presets, on the same screen as the items they are made of.
+ *
+ * A preset names a common deliverable and the lines it usually takes. Each row
+ * says how many lines it carries and flags any that no longer match a
+ * catalogue item — a renamed item silently drops out of a preset otherwise,
+ * and you find out when an estimate comes in light.
+ */
+function presetsCard() {
+  const ps = wbPresets();
+  const names = new Set(wbItems().map(i => `${i.division} ${i.name}`));
+  const missingIn = p => (p.lines || []).filter(([d, n]) => !names.has(`${d} ${n}`)).length;
+
+  return `
+  <section class="card" style="margin-bottom:12px">
+    <header>${icon('file')}<h3 style="margin-left:8px">Presets</h3>
+      <span class="sub">a common deliverable as a starting breakdown</span>
+      <div class="spacer" style="flex:1"></div>
+      <span class="chip tiny">${ps.length}</span>
+    </header>
+    <div class="body">
+      <p class="tiny mute" style="margin:0 0 10px">Applying one replaces the lines in the
+        calculator. To make a new one, build the breakdown on the Calculator tab and press
+        <b>Save as preset</b> — quicker and more accurate than describing it in a form.</p>
+      ${ps.length ? `<table class="tbl"><thead><tr>
+          <th>Preset</th><th class="num" style="width:80px">Lines</th>
+          <th style="width:160px"></th><th style="width:40px"></th></tr></thead>
+        <tbody>${ps.map(p => {
+          const miss = missingIn(p);
+          return `<tr data-p="${esc(p.id)}">
+            <td><b>${esc(p.label)}</b>${miss
+              ? `<div class="tiny" style="color:var(--warn,#C77405)">${miss === 1
+                  ? '1 line no longer matches a catalogue item'
+                  : `${miss} lines no longer match a catalogue item`}</div>`
+              : ''}</td>
+            <td class="num tiny">${(p.lines || []).length}</td>
+            <td><button class="btn sm subtle" data-act="preset-rename">Rename</button></td>
+            <td class="act"><button class="btn icon sm subtle" data-act="preset-del" title="Delete preset">
+              <svg class="ico"><use href="#i-trash"></use></svg></button></td>
+          </tr>`;
+        }).join('')}</tbody></table>`
+        : '<p class="tiny mute">None yet.</p>'}
+    </div>
+  </section>`;
+}
+
 function catalogueTab() {
   const groups = itemsByDivision().filter(g => !ui.catDivision || g.division.id === ui.catDivision);
   const cfg = wbSettings();
@@ -609,6 +630,8 @@ function catalogueTab() {
     <button class="btn sm subtle" data-act="csv-catalogue">${icon('down')}CSV</button>
     <button class="btn primary sm" data-act="item-add">${icon('plus')}Add work item</button>
   </div>
+
+  ${raw(presetsCard())}
 
   ${raw(groups.map(g => `
     <section class="card" style="margin-bottom:12px">
@@ -722,7 +745,10 @@ function ratesTab() {
 
 async function addLineDialog() {
   const groups = itemsByDivision();
-  if (!groups.length) { toast('The catalogue is empty. Add work items first.', 'warn'); return false; }
+  const divs = wbDivisions();
+  if (!groups.length && !divs.length) {
+    toast('No divisions are set up yet.', 'warn'); return false;
+  }
 
   const res = await dialog({
     title: 'Add work items', wide: true,
@@ -730,6 +756,37 @@ async function addLineDialog() {
       <div class="banner"><svg class="ico"><use href="#i-info"></use></svg>
         <div>Tick everything this deliverable needs. Quantity and complexity are
           set per line afterwards.</div></div>
+
+      <!--
+        A one-off line, without a trip to the Catalogue screen.
+
+        A line already carries its own name, division and base hours - they are
+        copied from the catalogue item when the line is made, and the estimate
+        reads the line, not the catalogue. So a custom item needs no catalogue
+        entry at all, and the catalogue does not fill up with one-offs. Tick
+        the box when it IS worth keeping.
+      -->
+      <details class="wb-custom" style="margin:10px 0 4px;border:1px solid var(--line,#e3e3e8);border-radius:8px;padding:8px 10px">
+        <summary style="cursor:pointer;font-size:12px;font-weight:600">Add a custom work item</summary>
+        <div style="display:grid;grid-template-columns:repeat(12,1fr);gap:8px 10px;margin-top:10px">
+          <label class="fld" style="grid-column:span 3;margin:0"><span>Division</span>
+            <select id="cu_div">${divs.map(d => `<option value="${esc(d.id)}">${esc(d.label)}</option>`).join('')}</select></label>
+          <label class="fld" style="grid-column:span 5;margin:0"><span>Work item</span>
+            <input id="cu_name" placeholder="e.g. Licensor revision pass"></label>
+          <label class="fld" style="grid-column:span 2;margin:0"><span>Base ETA (h)</span>
+            <input id="cu_hours" type="number" min="0" step="0.25" value="1"></label>
+          <label class="fld" style="grid-column:span 2;margin:0"><span>Quantity</span>
+            <input id="cu_qty" type="number" min="1" step="1" value="1"></label>
+          <label class="tiny" style="grid-column:span 8;display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" id="cu_save">
+            <span>Also add it to the catalogue, so it is on this list next time</span></label>
+          <div style="grid-column:span 4;text-align:right">
+            <button type="button" class="btn sm" id="cu_add">Add this item</button></div>
+          <div class="tiny mute" style="grid-column:span 12" id="cu_msg">
+            Base ETA is one artist, normal complexity, one of the thing — the same
+            basis as every catalogue item.</div>
+        </div>
+      </details>
       <div class="wb-pick">${groups.map(g => `
         <div class="wb-pick-g">
           <div class="wb-pick-h">
@@ -748,10 +805,32 @@ async function addLineDialog() {
              <button class="btn" data-no>Cancel</button>
              <button class="btn primary" data-ok>Add selected</button>`,
     onMount: ({ root, close }) => {
+      /* Custom lines are collected here and handed back with the ticked ids,
+         so one press of "Add selected" adds both. Closing the dialog without
+         it throws them away, which is what Cancel should mean. */
+      const custom = [];
       const count = () => {
-        const n = root.querySelectorAll('[data-item]:checked').length;
+        const n = root.querySelectorAll('[data-item]:checked').length + custom.length;
         root.querySelector('[data-count]').textContent =
           n ? `${n} item${n === 1 ? '' : 's'} selected` : 'Nothing selected';
+      };
+
+      root.querySelector('#cu_add').onclick = () => {
+        const name = root.querySelector('#cu_name').value.trim();
+        const hours = Number(root.querySelector('#cu_hours').value);
+        const qty = Math.max(1, Math.round(Number(root.querySelector('#cu_qty').value) || 1));
+        const division = root.querySelector('#cu_div').value;
+        const msg = root.querySelector('#cu_msg');
+        if (!name) { root.querySelector('#cu_name').focus(); msg.textContent = 'Give it a name first.'; return; }
+        if (!(hours >= 0)) { root.querySelector('#cu_hours').focus(); msg.textContent = 'Base ETA must be a number.'; return; }
+        custom.push({ division, name, baseHours: hours, qty, save: root.querySelector('#cu_save').checked });
+        msg.textContent = `Added: ${custom.map(c => c.name).join(', ')}`;
+        root.querySelector('#cu_name').value = '';
+        root.querySelector('#cu_hours').value = '1';
+        root.querySelector('#cu_qty').value = '1';
+        root.querySelector('#cu_save').checked = false;
+        root.querySelector('#cu_name').focus();
+        count();
       };
       root.addEventListener('change', count);
       root.querySelectorAll('[data-all]').forEach(b => b.onclick = () => {
@@ -762,15 +841,33 @@ async function addLineDialog() {
         count();
       });
       root.querySelector('[data-no]').onclick = () => close();
-      root.querySelector('[data-ok]').onclick = () =>
-        close([...root.querySelectorAll('[data-item]:checked')].map(x => x.dataset.item));
+      root.querySelector('[data-ok]').onclick = () => close({
+        ids: [...root.querySelectorAll('[data-item]:checked')].map(x => x.dataset.item),
+        custom,
+      });
     },
   });
 
-  if (!res || !res.length) return false;
-  for (const id of res) draft.lines.push(newLine(id));
+  if (!res) return false;
+  const { ids = [], custom = [] } = res;
+  if (!ids.length && !custom.length) return false;
+
+  for (const id of ids) draft.lines.push(newLine(id));
+
+  for (const c of custom) {
+    /* No itemId: this line is not backed by the catalogue and does not need to
+       be. `estimate()` reads baseHours off the line itself. */
+    draft.lines.push(newLine('', {
+      division: c.division, name: c.name, baseHours: c.baseHours, qty: c.qty,
+      seniority: defaultSeniority(c.division),
+    }));
+    if (c.save) saveItem({ division: c.division, name: c.name, hours: c.baseHours, active: true });
+  }
+
   dirty = true;
-  toast(`${res.length} line${res.length === 1 ? '' : 's'} added`, 'ok');
+  const n = ids.length + custom.length;
+  const kept = custom.filter(c => c.save).length;
+  toast(`${n} line${n === 1 ? '' : 's'} added${kept ? `, ${kept} saved to the catalogue` : ''}`, 'ok');
   return true;
 }
 
@@ -978,7 +1075,21 @@ export default {
         ]);
       },
       'add-line': () => addLineDialog().then(r => r && redraw()),
-      'add-preset': (el, ev) => menu(ev, PRESETS.map(p => ({
+      /* Save what is on screen as a new preset. The quickest way to get one
+         that matches your pipeline is to build it once and keep it, rather
+         than to describe it in a form. */
+      'save-preset': async () => {
+        if (!draft.lines.length) return toast('Add some lines first.', 'warn');
+        const res = await formDlg('Save as preset', [
+          { k: 'label', label: 'Preset name', value: draft.name || '', required: true, span: 12,
+            hint: 'What kind of deliverable this breakdown is for.' },
+        ], { ok: 'Save preset' });
+        if (!res) return;
+        savePreset({ label: res.label.trim(), lines: linesToPreset(draft.lines) });
+        toast(`Preset “${res.label.trim()}” saved — ${draft.lines.length} lines`, 'ok', 6000);
+        redraw();
+      },
+      'add-preset': (el, ev) => menu(ev, wbPresets().map(p => ({
         label: p.label, icon: 'file',
         run: async () => {
           if (draft.lines.length && !await confirmDlg(
@@ -1103,6 +1214,27 @@ export default {
       /* --- catalogue --- */
       catfilter: el => { ui.catDivision = el.value; saveUi(); redraw(); },
       'item-add': () => editItemDialog(null).then(r => r && redraw()),
+
+      'preset-rename': async el => {
+        const id = el.closest('[data-p]').dataset.p;
+        const p = wbPreset(id);
+        if (!p) return;
+        const res = await formDlg('Rename preset', [
+          { k: 'label', label: 'Preset name', value: p.label, required: true, span: 12 },
+        ], { ok: 'Save' });
+        if (!res) return;
+        savePreset({ id, label: res.label.trim() });
+        toast('Preset renamed', 'ok'); redraw();
+      },
+      'preset-del': async el => {
+        const id = el.closest('[data-p]').dataset.p;
+        const p = wbPreset(id);
+        if (!p) return;
+        if (!await confirmDlg(`Delete the preset “${p.label}”? Estimates already built from it are untouched.`,
+                              { ok: 'Delete', danger: true, title: 'Delete preset' })) return;
+        removePreset(id);
+        toast('Preset deleted', 'ok'); redraw();
+      },
       'item-menu': (el, ev) => {
         const id = el.closest('[data-i]').dataset.i;
         const it = wbItem(id);

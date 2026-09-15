@@ -214,6 +214,36 @@ export function itemsByDivision(state = S.get()) {
 
 /* ---------- estimating --------------------------------------------------- */
 
+/* ---------- presets ------------------------------------------------------ */
+
+/**
+ * Preset breakdowns, from state.
+ *
+ * They used to be a `const` in the view, which made "add a preset for the new
+ * pipeline" a code change to a published app. They are working assumptions,
+ * not code, so they live in state and are managed on the Catalogue screen.
+ */
+export const wbPresets = (state = S.get()) => state.wbPresets || [];
+export const wbPreset = (id, state = S.get()) => wbPresets(state).find(p => p.id === id) || null;
+
+export function savePreset(preset) {
+  S.mutate(s => {
+    s.wbPresets ||= [];
+    const i = s.wbPresets.findIndex(p => p.id === preset.id);
+    if (i >= 0) s.wbPresets[i] = { ...s.wbPresets[i], ...preset };
+    else s.wbPresets.push({ ...preset, id: preset.id || S.uid('wbp') });
+  }, { label: 'work breakdown preset' });
+}
+
+export function removePreset(id) {
+  S.mutate(s => { s.wbPresets = (s.wbPresets || []).filter(p => p.id !== id); },
+           { label: 'remove preset' });
+}
+
+/** Turn the estimate's current lines into a preset's [div, name, qty] rows. */
+export const linesToPreset = lines =>
+  (lines || []).map(l => [l.division || '', l.name || '', Number(l.qty) || 1]);
+
 export const wbEstimates = (state = S.get()) => state.wbEstimates || [];
 export const wbEstimate = (id, state = S.get()) => wbEstimates(state).find(e => e.id === id) || null;
 

@@ -15,9 +15,9 @@
    arrived.
    ========================================================================= */
 
-export const BUILD = '2026-09-15.3';
+export const BUILD = '2026-09-15.4';
 
-export const BUILD_NOTES = 'Mirrored issues now belong to a project, and local tasks stop disappearing. An import set no project on anything it brought in, so every issue was invisible on its own project’s Tasks tab — the link is the Jira key on the project record, and the import now resolves it, offering to set it when nothing matches. Divisions are filled in from the same labels they are pushed out with. Separately, a task you created here and have not pushed had no Jira status, and once the lanes became Jira’s statuses it matched none of them and vanished from the board; it now falls back to the nearest lane by category and is marked "local".';
+export const BUILD_NOTES = 'The work breakdown takes custom items, and presets stop being source code. "Add work items" now has a custom row — division, name, base ETA, quantity — which adds a line straight to the estimate; a line already carries its own name and hours, so a one-off needs no catalogue entry and the catalogue does not fill up with them. Tick the box when it is worth keeping. The four presets were a const inside the view, so adding one meant editing a published app; they are data now, listed on the Catalogue screen where they can be renamed and deleted, and any breakdown on the Calculator can be kept with Save as preset. A preset whose lines no longer match a catalogue item says so, rather than quietly coming in light.';
 
 
 
