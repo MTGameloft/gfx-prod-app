@@ -1,0 +1,48 @@
+# ============================================================================
+# THIS REPOSITORY IS PUBLIC.
+#
+# Everything tracked here is source. No file that carries real data about a
+# project, a person, a cost or a Jira issue may ever be committed, and the
+# audit of 2026-09-16 confirmed none ever has.
+#
+# These patterns exist because that was previously guaranteed only by
+# discipline: testing the Jira mirror means putting a real 550 KB export next
+# to index.html so the page can fetch it, and it was deleted by hand before
+# every commit. `git add -A` one time before that delete and real issue
+# titles, assignee names and email addresses would be in a public repository,
+# in a commit, forever.
+#
+# A rule costs nothing. Remembering costs everything, once.
+# ============================================================================
+
+# Jira mirror, filter, change sets and their results — real issue data
+gfx-jira-mirror*.json
+gfx-jira-changes*.json
+gfx-jira-result*.json
+gfx-jira-queue*.json
+gfx-jira-filter*.json
+
+# app exports and backups — real roster, costs, tasks
+gfx-prod-app-backup*.json
+gfx-backup-*.json
+*.xlsx
+*.xlsm
+
+# anything staged for a test, by the convention that it starts with _tmp or _
+_tmp*
+_fsa-*
+_probe*
+
+# credentials, in any shape
+*.secret
+*.key
+*.pem
+*.pfx
+*.token
+
+# the usual noise
+Thumbs.db
+desktop.ini
+*.tmp
+*.bak
+~$*
