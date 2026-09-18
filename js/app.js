@@ -11,7 +11,7 @@ import { initCloud, onCloudChange } from './cloudbackup.js';
 import { initLocal, onLocalChange, reconnect as reconnectFolder } from './localbackup.js';
 import { initBridge } from './bridge.js';
 import { saveBackupFile, lastExportAt, exportIsStale } from './backupformat.js';
-import { checkForUpdate, hardReload } from './version.js';
+import { checkForUpdate, hardReload, reloadOutcome } from './version.js';
 
 import dashboard  from './views/dashboard.js';
 import tasks      from './views/tasks.js';
@@ -249,22 +249,69 @@ function watchForNewerBuild() {
     try { r = await checkForUpdate(); } catch { return; }   // offline: not worth a banner
     if (r.upToDate || $('#newerBuild')) return;
 
+    /*
+     * Do not nag.
+     *
+     * "Later" used to only remove the element, so the next navigation that
+     * re-ran boot put it straight back. Dismissal is now remembered against
+     * the specific build being offered: a newer one still speaks up, the
+     * same one stays quiet for the session.
+     */
+    let snoozed = null;
+    try { snoozed = sessionStorage.getItem('gfxprod.snoozeBuild'); } catch {}
+    if (snoozed === r.latest) return;
+
+    /*
+     * Did the reload we performed last page load actually achieve anything?
+     *
+     * This is the loop the user reported: press Reload now, the banner comes
+     * back seconds later, press it again, for ever. The reload was being
+     * defeated by the HTTP cache — see hardReload() — and the banner had no
+     * way to tell a first offer from a failed retry, so it presented the
+     * same button that had just silently failed.
+     */
+    const outcome = reloadOutcome();
+
     const bar = document.createElement('div');
     bar.id = 'newerBuild';
-    bar.className = 'banner';
+    bar.className = 'banner' + (outcome === 'failed' ? ' warn' : '');
     bar.style.cssText = 'margin:0;border-radius:0;border-left:0;border-right:0;border-top:0';
-    bar.innerHTML = `
-      <svg class="ico"><use href="#i-refresh"></use></svg>
-      <div style="flex:1">
-        <b>A newer version of this app is available.</b>
-        You are on ${esc(r.current)}; the server has ${esc(r.latest)}.
-        Your data is untouched either way.
-      </div>
-      <button class="btn sm primary" data-reload>Reload now</button>
-      <button class="btn sm subtle" data-dismiss>Later</button>`;
+
+    bar.innerHTML = outcome === 'failed'
+      ? `<svg class="ico"><use href="#i-warn"></use></svg>
+         <div style="flex:1">
+           <b>The reload did not pick up the new version.</b>
+           Still on ${esc(r.current)}; the server has ${esc(r.latest)}. Something is holding the
+           old files — usually the browser cache, which clears itself within ten minutes.
+           <span class="tiny mute" style="display:block;margin-top:2px">
+             In a browser tab: <b>Ctrl</b> <b>Shift</b> <b>R</b>. In Teams: close the tab and reopen it.
+             Your data is untouched either way.</span>
+         </div>
+         <button class="btn sm" data-reload>Try again</button>
+         <button class="btn sm subtle" data-dismiss>Dismiss</button>`
+      : `<svg class="ico"><use href="#i-refresh"></use></svg>
+         <div style="flex:1">
+           <b>A newer version of this app is available.</b>
+           You are on ${esc(r.current)}; the server has ${esc(r.latest)}.
+           Your data is untouched either way.
+         </div>
+         <button class="btn sm primary" data-reload>Reload now</button>
+         <button class="btn sm subtle" data-dismiss>Later</button>`;
+
     $('#main').insertBefore(bar, $('#view'));
-    bar.querySelector('[data-dismiss]').onclick = () => bar.remove();
-    bar.querySelector('[data-reload]').onclick = () => hardReload();
+    bar.querySelector('[data-dismiss]').onclick = () => {
+      try { sessionStorage.setItem('gfxprod.snoozeBuild', r.latest); } catch {}
+      bar.remove();
+    };
+    bar.querySelector('[data-reload]').onclick = async (e) => {
+      /* Refreshing the cache takes a moment. Without this the button looks
+         dead for a second or two, which on a control already suspected of
+         doing nothing is the worst possible feedback. */
+      const b = e.currentTarget;
+      b.disabled = true;
+      b.textContent = 'Fetching the new files…';
+      await hardReload();
+    };
   }, 4000);
 }
 

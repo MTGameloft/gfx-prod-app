@@ -1730,7 +1730,14 @@ export default {
             s1.style.color = 'var(--warn)';
             const b = document.createElement('button');
             b.className = 'btn sm primary'; b.textContent = 'Reload now';
-            b.onclick = () => hardReload();
+            /* Refreshing the cached modules takes a second or two. Saying so
+               matters here more than most places: this is the control that
+               was reported as "does not seem to update", and a button that
+               looks inert is how that impression forms. */
+            b.onclick = async () => {
+              b.disabled = true; b.textContent = 'Fetching the new files…';
+              await hardReload();
+            };
             msg.appendChild(s1); msg.appendChild(b);
           }
         } catch (e) {
