@@ -73,6 +73,10 @@ const ui = Object.assign({
   divisions: [],         // [] = all
   showTasks: true,
   showCapacity: true,
+  /* Chart height in px, 0 = the CSS default. Dragged by the handle under the
+     chart; kept here with the other view preferences so it survives a reload
+     and every re-render in between. */
+  height: 0,
   /*
    * OFF by default, and the reasoning matters.
    *
@@ -761,13 +765,15 @@ export default {
         </header>
         ${raw(ganttHTML({
           bars: sim.bars, from: sim.from, to: sim.to, zoom: ui.zoom,
-          collapsed, periods: periodLines, footer, sym: sym(),
+          collapsed, periods: periodLines, footer, sym: sym(), height: ui.height,
           emptyMsg: 'Nothing scheduled in this window. Log a work-breakdown estimate, '
                   + 'give a task an estimate and a due date, or add a request below.',
         }))}
         <div class="gx-hintbar tiny mute">
-          Drag a bar to move it · drag its right edge to change how long it may take —
-          the app answers with the crew that would need · click a capacity cell to see what is in it
+          Click a row name to fold it · drag a bar to move it · drag its right edge to change
+          how long it may take — the app answers with the crew that would need ·
+          click a capacity cell to see what is in it ·
+          <b>drag the bar at the very bottom to make the chart taller</b>
         </div>
       </section>
 
@@ -786,6 +792,10 @@ export default {
       onMove: d => moveBar(d, ctx),
       onResize: d => resizeBar(d, ctx),
       onCell: c => cellDetail(c, sim),
+      /* Remembered, but NOT re-rendered: the drag has already set the CSS
+         variable on the live element, so re-rendering here would rebuild the
+         whole chart mid-gesture and throw the scroll position away. */
+      onHeight: px => { ui.height = px; saveUi(); },
     });
 
     scrollToToday(host, { from: sim.from, to: sim.to, zoom: ui.zoom });

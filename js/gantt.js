@@ -172,9 +172,19 @@ const depthOf = (bar, byId) => {
 
 function labelCell(bar, depth, collapsed, hasKids, sym) {
   const money = bar.cost ? fmtMoney(bar.cost, sym) : '';
+  /*
+   * The arrow is 24px wide and the full height of the row, not the 15x15 box
+   * it started as. Measured in the app: a 15px target inside a 30px row is
+   * hard to hit, and MISSING it used to land on the label — which opened the
+   * project. So a near-miss did not do nothing, it navigated away, which is
+   * exactly how "the collapse arrow is broken" looks from the outside.
+   *
+   * The row itself now toggles too (see `wireGantt`), so the arrow is the
+   * precise affordance rather than the only one.
+   */
   const chev = hasKids
     ? `<button class="gx-chev${collapsed ? '' : ' open'}" data-act="gx-fold" data-b="${esc(bar.id)}"
-         title="${collapsed ? 'Expand' : 'Collapse'}" aria-expanded="${!collapsed}">
+         title="${collapsed ? 'Expand' : 'Collapse'}" aria-expanded="${!collapsed}" aria-label="${collapsed ? 'Expand' : 'Collapse'} ${esc(bar.label)}">
          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"
               stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></button>`
     : '<span class="gx-chev-sp"></span>';
@@ -184,9 +194,10 @@ function labelCell(bar, depth, collapsed, hasKids, sym) {
   if (bar.crew && bar.kind !== 'project') meta.push(`${bar.crew}×`);
   if (bar.workDays) meta.push(`${fmtNum(bar.workDays, 0)}d`);
 
-  return `<div class="gx-lbl gx-k-${esc(bar.kind)}${bar.scenario ? ' scn' : ''}"
+  return `<div class="gx-lbl gx-k-${esc(bar.kind)}${bar.scenario ? ' scn' : ''}${hasKids ? ' has-kids' : ''}"
             style="padding-left:${8 + depth * 15}px" data-b="${esc(bar.id)}"
-            title="${esc(bar.label)}">
+            data-kids="${hasKids ? 1 : 0}"
+            title="${esc(bar.label)}${hasKids ? ' — click to ' + (collapsed ? 'expand' : 'collapse') : ''}">
     ${chev}
     <span class="gx-dot" style="background:${esc(bar.color)}"></span>
     <span class="gx-name">${esc(bar.code ? bar.code + ' · ' : '')}${esc(bar.label)}</span>
@@ -268,10 +279,14 @@ function barCell(bar, geo, sym) {
  * @param {string} [o.footer]    extra markup under the rows, aligned to the
  *                               same pixel grid — the capacity strip uses it
  * @param {number} [o.maxRows]   guard against a pathological render
+ * @param {number} [o.height]    viewport height in px. 0/null = the default.
+ *                               Owned by the caller so it can be persisted
+ *                               wherever that view keeps its preferences —
+ *                               this module stays free of the store.
  */
 export function ganttHTML({ bars, from, to, zoom = 'week', collapsed = new Set(),
                             periods = [], footer = '', emptyMsg = 'Nothing scheduled in this window.',
-                            sym = '$', maxRows = 400 } = {}) {
+                            sym = '$', maxRows = 400, height = 0 } = {}) {
   const z = zoomOf(zoom);
   const geo = geometry(from, to, z.dayPx);
   const cal = workCalendar(from, to);
@@ -310,8 +325,12 @@ export function ganttHTML({ bars, from, to, zoom = 'week', collapsed = new Set()
   const todayX = (today() >= from && today() <= to)
     ? `<div class="gx-today" style="left:${geo.x(today()) + geo.dayPx / 2}px"><b>Today</b></div>` : '';
 
+  /* How tall the chart can be before it scrolls. The height the user dragged
+     to wins; otherwise the CSS default, which is viewport-relative. */
+  const hVar = height > 0 ? `;--gx-h:${Math.round(height)}px` : '';
+
   return `
-  <div class="gx" data-gx style="--gx-label:${LABEL_W}px;--gx-row:${ROW_H}px;--gx-bar:${BAR_H}px">
+  <div class="gx" data-gx style="--gx-label:${LABEL_W}px;--gx-row:${ROW_H}px;--gx-bar:${BAR_H}px${hVar}">
     <div class="gx-scroll" data-gx-scroll>
       <div class="gx-canvas" style="width:${LABEL_W + geo.width}px">
 
@@ -332,6 +351,11 @@ export function ganttHTML({ bars, from, to, zoom = 'week', collapsed = new Set()
 
         ${footer ? `<div class="gx-foot">${footer}</div>` : ''}
       </div>
+    </div>
+    <div class="gx-grip-h" data-gx-grip role="separator" aria-orientation="horizontal"
+         tabindex="0" aria-label="Resize the chart"
+         title="Drag to make the chart taller or shorter · double-click to reset">
+      <span></span>
     </div>
   </div>`;
 }
@@ -434,11 +458,91 @@ export function wireGantt(host, handlers = {}) {
 
     const lbl = e.target.closest('.gx-lbl');
     if (lbl) {
+      /*
+       * A row that HAS children folds; a leaf opens.
+       *
+       * Both used to open, so the only way to collapse was a 15px arrow with
+       * "navigate away" as the penalty for missing it. Folding from the whole
+       * row is what every other tree in the world does, and the record is
+       * still one click away on the bar itself — which is the bigger target
+       * and the more obvious place to aim at.
+       */
+      if (lbl.dataset.kids === '1') { handlers.onFold?.(lbl.dataset.b); return; }
       const b = gx.querySelector(`[data-act="gx-bar"][data-b="${CSS.escape(lbl.dataset.b)}"]`);
       if (b) handlers.onOpen?.({ id: b.dataset.b, ref: b.dataset.ref, kind: b.dataset.kind });
     }
   };
   gx.addEventListener('click', click);
+
+  /* ---- drag the bottom edge to resize the chart ------------------------- */
+
+  /*
+   * Height is a real complaint, not a nicety: at the default the chart showed
+   * 14 of 27 rows, so half the plan was behind a scrollbar inside a panel
+   * that was itself inside a scrolling page. Two nested scrollbars is a bad
+   * place to read a schedule from.
+   *
+   * The height is applied as a CSS variable rather than an inline height on
+   * the scroller, so the drag survives the re-render that follows almost
+   * every interaction here — the variable lives on the root element the
+   * caller re-emits with its stored value.
+   */
+  const MIN_H = 160;
+  const grip = gx.querySelector('[data-gx-grip]');
+  const scroller = gx.querySelector('[data-gx-scroll]');
+  let hDrag = null;
+
+  const hDown = e => {
+    if (e.button !== 0 || !scroller) return;
+    e.preventDefault();
+    hDrag = { y0: e.clientY, h0: scroller.getBoundingClientRect().height };
+    grip.classList.add('on');
+    document.body.style.cursor = 'ns-resize';
+    document.body.style.userSelect = 'none';
+  };
+  const hMove = e => {
+    if (!hDrag) return;
+    const h = Math.max(MIN_H, Math.round(hDrag.h0 + (e.clientY - hDrag.y0)));
+    gx.style.setProperty('--gx-h', h + 'px');
+  };
+  const hUp = () => {
+    if (!hDrag) return;
+    hDrag = null;
+    grip.classList.remove('on');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    const h = parseInt(gx.style.getPropertyValue('--gx-h'), 10);
+    if (h) handlers.onHeight?.(h);
+  };
+  /* Double-click clears it rather than setting some other fixed number: the
+     way back to the default has to be obvious, or a bad drag is permanent. */
+  const hReset = () => {
+    gx.style.removeProperty('--gx-h');
+    handlers.onHeight?.(0);
+  };
+  /* Keyboard, because a drag handle that only takes a mouse is not a control
+     everyone can use. */
+  const hKey = e => {
+    if (!scroller) return;
+    const step = e.shiftKey ? 100 : 25;
+    let h = null;
+    if (e.key === 'ArrowDown') h = scroller.getBoundingClientRect().height + step;
+    else if (e.key === 'ArrowUp') h = scroller.getBoundingClientRect().height - step;
+    else if (e.key === 'Home') { e.preventDefault(); hReset(); return; }
+    else return;
+    e.preventDefault();
+    h = Math.max(MIN_H, Math.round(h));
+    gx.style.setProperty('--gx-h', h + 'px');
+    handlers.onHeight?.(h);
+  };
+
+  if (grip) {
+    grip.addEventListener('pointerdown', hDown);
+    grip.addEventListener('dblclick', hReset);
+    grip.addEventListener('keydown', hKey);
+    window.addEventListener('pointermove', hMove);
+    window.addEventListener('pointerup', hUp);
+  }
 
   /* ---- drag to move, drag the right grip to re-crew --------------------- */
 
@@ -531,6 +635,13 @@ export function wireGantt(host, handlers = {}) {
     window.removeEventListener('pointermove', move);
     window.removeEventListener('pointerup', up);
     window.removeEventListener('pointercancel', up);
+    if (grip) {
+      grip.removeEventListener('pointerdown', hDown);
+      grip.removeEventListener('dblclick', hReset);
+      grip.removeEventListener('keydown', hKey);
+      window.removeEventListener('pointermove', hMove);
+      window.removeEventListener('pointerup', hUp);
+    }
   };
 }
 

@@ -1218,17 +1218,44 @@ table.tbl tfoot td {
   --gx-bar: 16px;
   position: relative;
 }
-.gx-scroll { overflow: auto; max-height: min(62vh, 640px); overscroll-behavior-x: contain; }
+/*
+ * The chart's height is the user's to set.
+ *
+ * It was a fixed `min(62vh, 640px)`, which in a Teams tab showed 14 of 27
+ * rows — half the plan behind a scrollbar, inside a panel that is itself
+ * inside a scrolling page. `--gx-h` is set by the drag handle at the bottom
+ * and remembered per chart; the fallback is the old default, so a chart that
+ * has never been dragged looks exactly as it did.
+ */
+.gx-scroll {
+  overflow: auto;
+  max-height: var(--gx-h, min(62vh, 640px));
+  overscroll-behavior-x: contain;
+}
+
+.gx-grip-h {
+  height: 11px; cursor: ns-resize; display: flex; align-items: center; justify-content: center;
+  border-top: 1px solid var(--line); background: var(--bg-elev);
+  transition: background var(--t-fast);
+}
+.gx-grip-h > span {
+  width: 42px; height: 3px; border-radius: 2px; background: var(--line);
+  transition: background var(--t-fast), width var(--t-fast);
+}
+.gx-grip-h:hover > span, .gx-grip-h:focus-visible > span { background: var(--accent); width: 62px; }
+.gx-grip-h.on { background: var(--accent-soft); }
+.gx-grip-h.on > span { background: var(--accent); width: 62px; }
+.gx-grip-h:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .gx-canvas { position: relative; min-width: 100%; }
 
 /* ---- header ------------------------------------------------------------- */
 
 .gx-head {
-  display: flex; position: sticky; top: 0; z-index: 6;
+  display: flex; position: sticky; top: 0; z-index: 14;
   background: var(--bg-elev); border-bottom: 1px solid var(--line);
 }
 .gx-head-lbl {
-  flex: 0 0 var(--gx-label); position: sticky; left: 0; z-index: 7;
+  flex: 0 0 var(--gx-label); position: sticky; left: 0; z-index: 15;
   background: var(--bg-elev); padding: 7px 12px;
   font-size: 10.5px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase;
   color: var(--text-mute); border-right: 1px solid var(--line);
@@ -1259,7 +1286,7 @@ table.tbl tfoot td {
 .gx-body { display: flex; align-items: flex-start; }
 
 .gx-col-lbl {
-  flex: 0 0 var(--gx-label); position: sticky; left: 0; z-index: 4;
+  flex: 0 0 var(--gx-label); position: sticky; left: 0; z-index: 10;
   background: var(--bg-elev); border-right: 1px solid var(--line);
 }
 .gx-col-time { position: relative; flex: none; }
@@ -1282,15 +1309,27 @@ table.tbl tfoot td {
 .gx-lbl.scn .gx-name { color: color-mix(in srgb, var(--warn) 70%, var(--text)); font-style: italic; }
 
 .gx-dot { width: 8px; height: 8px; border-radius: 2px; flex: none; }
-.gx-chev, .gx-chev-sp { width: 15px; height: 15px; flex: none; }
+/*
+ * 24px wide and the full height of the row, up from 15x15.
+ *
+ * Measured in the app: a 15px target in a 30px row is genuinely hard to hit,
+ * and a near-miss landed on the label — which opened the project. So missing
+ * the arrow did not do nothing, it navigated away, and that is what "the
+ * collapse arrow does not work" actually was.
+ */
+.gx-chev, .gx-chev-sp { width: 24px; flex: none; }
+.gx-chev-sp { height: 15px; }
 .gx-chev {
   border: 0; background: none; padding: 0; cursor: pointer; color: var(--text-mute);
   display: flex; align-items: center; justify-content: center;
-  transition: transform var(--t-fast);
+  align-self: stretch;                     /* the whole row height is clickable */
+  border-radius: var(--r-sm);
+  transition: color var(--t-fast), background var(--t-fast);
 }
-.gx-chev svg { width: 11px; height: 11px; }
-.gx-chev.open { transform: rotate(90deg); }
-.gx-chev:hover { color: var(--text); }
+.gx-chev svg { width: 12px; height: 12px; transition: transform var(--t-fast); }
+.gx-chev.open svg { transform: rotate(90deg); }
+.gx-chev:hover { color: var(--text); background: var(--bg-active); }
+.gx-chev:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* ---- the time column ---------------------------------------------------- */
 
@@ -1303,7 +1342,7 @@ table.tbl tfoot td {
 
 .gx-today {
   position: absolute; top: 0; bottom: 0; width: 2px; background: var(--risk);
-  z-index: 5; pointer-events: none;
+  z-index: 4; pointer-events: none;
 }
 .gx-today b {
   position: absolute; top: 2px; left: 4px; font-size: 9px; font-weight: 700;
@@ -1360,7 +1399,7 @@ table.tbl tfoot td {
     color-mix(in srgb, var(--warn) 55%, transparent) 6px 12px);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 70%, transparent);
 }
-.gx-bar.dragging { opacity: .75; cursor: grabbing; z-index: 30; box-shadow: var(--shadow-2); }
+.gx-bar.dragging { opacity: .75; cursor: grabbing; z-index: 6; box-shadow: var(--shadow-2); }
 .gx-dragging { cursor: grabbing; user-select: none; }
 
 .gx-grip {
@@ -1378,7 +1417,7 @@ table.tbl tfoot td {
    separate milestone timeline into this one chart. */
 .gx-ms {
   position: absolute; top: calc(var(--gx-row) / 2 - 5px); width: 10px; height: 10px;
-  transform: rotate(45deg); border-radius: 2px; z-index: 6; cursor: pointer;
+  transform: rotate(45deg); border-radius: 2px; z-index: 5; cursor: pointer;
   box-shadow: 0 0 0 2px var(--bg-elev);
 }
 .gx-ms:hover { transform: rotate(45deg) scale(1.35); }
@@ -1413,14 +1452,28 @@ table.tbl tfoot td {
  * keeps the two in one glance, which is the entire argument for drawing them
  * on a shared pixel grid in the first place.
  */
+/*
+ * The stacking order, in one place, because three separate guesses is how the
+ * milestone diamonds ended up painting on top of this strip:
+ *
+ *   0  backdrop (weekends, gridlines)     5  milestone diamonds
+ *   2  bars        3 hovered  6 dragged  10  frozen label column
+ *   4  today line, deadline marker       11  capacity strip's own label
+ *                                        12  capacity strip (sticky bottom)
+ *                                        14  header    15  header corner
+ *                                        40  drag read-out
+ *
+ * The rule that was broken: anything sticky must outrank everything that
+ * scrolls underneath it.
+ */
 .gx-foot {
   border-top: 2px solid var(--line); background: var(--bg-elev);
-  position: sticky; bottom: 0; z-index: 5; box-shadow: 0 -4px 10px rgba(0,0,0,.06);
+  position: sticky; bottom: 0; z-index: 12; box-shadow: 0 -4px 10px rgba(0,0,0,.06);
 }
 .gx-cap-strip { display: block; }
 .gx-cap-row { display: flex; align-items: stretch; height: 22px; }
 .gx-cap-lbl {
-  flex: 0 0 var(--gx-label); position: sticky; left: 0; z-index: 4;
+  flex: 0 0 var(--gx-label); position: sticky; left: 0; z-index: 11;
   background: var(--bg-elev); border-right: 1px solid var(--line);
   display: flex; align-items: center; gap: 6px; padding: 0 10px 0 12px;
   font-size: 11px; font-weight: 600;

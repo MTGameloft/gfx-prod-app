@@ -234,7 +234,7 @@ function taskBand(live) {
 const gxPrefs = key => {
   const by = S.get()?.prefs?.ganttBy;
   const own = by && typeof by === 'object' ? by[key] : null;
-  return { range: '6m', zoom: 'week', capacity: true, ...(own || {}) };
+  return { range: '6m', zoom: 'week', capacity: true, height: 0, ...(own || {}) };
 };
 const setGxPref = (key, patch) => S.mutate(s => {
   s.prefs ||= {};
@@ -279,14 +279,20 @@ function ganttCard(o) {
         <span>Capacity</span></label>
       ${raw(o.extra || '')}</header>
     ${raw(ganttHTML({
-      bars: sim.bars, from: sim.from, to: sim.to, zoom: pref.zoom, sym: symOf(),
+      bars: sim.bars, from: sim.from, to: sim.to, zoom: pref.zoom, sym: symOf(), height: pref.height,
+      /* `folded` was tracked and never rendered, so collapsing here silently
+         did nothing at all — the Plan passed its set through and this did
+         not. Caught by testing both charts rather than only the one the
+         change was about. */
+      collapsed: folded,
       periods: sim.periods.map(p => p.from),
       footer: pref.capacity && only.size
         ? capacityStripHTML(sim.load, geo, { onlyDivisions: only, sym: symOf() }) : '',
       emptyMsg: 'Nothing in this window. Widen the range, or add a milestone or an estimate.',
     }))}
     <div class="gx-hintbar tiny mute">
-      Click a bar to open it · drag a scope or a task to move it ·
+      Click a row name to fold it · click a bar to open it · drag a scope or a task to move it ·
+      drag the bar at the very bottom to make the chart taller ·
       <b data-act="k-plan" style="cursor:pointer;text-decoration:underline">open the Plan</b>
       to test an extra request against this
     </div>
@@ -312,11 +318,15 @@ function wireGanttCard(host, ctx) {
   /* Open on the useful part. A 6-month window that starts a fortnight ago
      would otherwise open at its left edge, so the first thing you see is a
      fortnight of history rather than the work in front of you. */
-  const pref = gxPrefs(host.querySelector('[data-gk]')?.dataset.gk || 'portfolio');
+  const key = host.querySelector('[data-gk]')?.dataset.gk || 'portfolio';
+  const pref = gxPrefs(key);
   const win = planWindow(pref.range);
   scrollToToday(host, { from: win.from, to: win.to, zoom: pref.zoom });
 
   return wireGantt(host, {
+    /* Silent: the drag has already set the variable on the live element, and
+       re-rendering mid-gesture would rebuild the chart and lose the scroll. */
+    onHeight: px => setGxPref(key, { height: px }),
     onFold: id => { foldToggle(id); ctx.rerender(); },
     onOpen: b => {
       if (b.kind === 'project') return ctx.go('projects', b.ref);

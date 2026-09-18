@@ -64,8 +64,12 @@ const n1 = x => (Number.isFinite(x)
 let draft = null;
 let dirty = false;
 
+/* Which rows of the Schedule chart are folded. Per page load, like the Plan's
+   — it is a way of looking at the breakdown, not part of the estimate. */
+let wbFolded = new Set();
+
 const UI_KEY = 'gfxwb.ui';
-const ui = Object.assign({ catDivision: '', estStatus: '' },
+const ui = Object.assign({ catDivision: '', estStatus: '', height: 0 },
   JSON.parse(localStorage.getItem(UI_KEY) || '{}'));
 const saveUi = () => localStorage.setItem(UI_KEY, JSON.stringify(ui));
 
@@ -376,7 +380,8 @@ function schedulePanel(draft, r) {
       <button class="btn sm subtle" data-act="go-plan" title="See it against every other project">
         ${icon('cal')}Open in Plan</button></header>
     ${raw(ganttHTML({
-      bars, from: win.from, to: win.to, zoom: win.zoom, sym: sym(),
+      bars, from: win.from, to: win.to, zoom: win.zoom, sym: sym(), height: ui.height,
+      collapsed: wbFolded,
       periods: periods.map(p => p.from),
       footer: capacityStripHTML(load, geo, { onlyDivisions: only, sym: sym() }),
       emptyMsg: 'Set a start date to place this breakdown on a calendar.',
@@ -1493,7 +1498,16 @@ export default {
      * edits the crew boxes above rather than the chart.
      */
     return wireGantt(host, {
+      /* Folding was not wired here at all, so the arrow and the row were dead
+         controls — worse than not offering them. */
+      onFold: id => {
+        if (wbFolded.has(id)) wbFolded.delete(id); else wbFolded.add(id);
+        redraw();
+      },
       onCell: () => toast('Open the Plan to see this week against every other project', '', 4000),
+      /* Same drag handle as the other two charts, remembered with this
+         screen's other view preferences. */
+      onHeight: px => { ui.height = px; saveUi(); },
     });
   },
 };
