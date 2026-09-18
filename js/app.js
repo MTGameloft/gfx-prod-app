@@ -17,6 +17,7 @@ import dashboard  from './views/dashboard.js';
 import tasks      from './views/tasks.js';
 import objectives from './views/objectives.js';
 import projects   from './views/projects.js';
+import plan       from './views/plan.js';
 import people     from './views/people.js';
 import leave      from './views/leave.js';
 import finance    from './views/finance.js';
@@ -30,7 +31,7 @@ import gfxwb      from './views/gfxwb.js';
 
 /* ---------- registry ----------------------------------------------------- */
 
-const VIEWS = [dashboard, tasks, objectives, projects, jiraImports, people, leave,
+const VIEWS = [dashboard, tasks, objectives, plan, projects, jiraImports, people, leave,
                finance, outsourcing, files, gfxwb, datax, notes, settings];
 const byId = id => VIEWS.find(v => v.id === id) || dashboard;
 
@@ -525,6 +526,16 @@ function projectItems() {
     ? [{ id: 'projects', title: 'Overview', icon: overview.icon, exact: true,
          hint: 'Every project at a glance' }]
     : [];
+
+  /* The Plan sits directly under Overview because it is the other whole-
+     portfolio view — one Gantt across every project, with the team's capacity
+     under it. It is a real VIEW, but this group is built from data rather
+     than from the registry, so it has to be named here to appear at all. */
+  const planView = VIEWS.find(v => v.id === 'plan');
+  if (planView) {
+    out.push({ id: 'plan', title: planView.title, icon: planView.icon, exact: true,
+               hint: 'One Gantt across every project, against real capacity' });
+  }
 
   for (const p of S.get().projects || []) {
     if (p.status === 'archived') continue;

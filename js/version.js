@@ -15,9 +15,9 @@
    arrived.
    ========================================================================= */
 
-export const BUILD = '2026-09-15.5';
+export const BUILD = '2026-09-18.1';
 
-export const BUILD_NOTES = '"Add this item" now adds the item. It used to hold the custom line back until you closed the dialog with Add selected, so pressing it cleared the form and did nothing you could see — and a ticked "also add it to the catalogue" wrote no catalogue entry at all unless you happened to leave the right way. It commits on the spot now: the line joins the breakdown, the catalogue entry is written, and what you added is listed back to you as chips. Because that can no longer be undone by Cancel, Cancel becomes Close once anything has been added, rather than offering an undo it would not honour. The button is red.';
+export const BUILD_NOTES = 'A new Plan screen, under Project Management: every project, scope and estimated task on one interactive Gantt, with the team’s real available days drawn week by week underneath it. Drag a bar to move it; drag its right edge to say how long the work may take and the app answers with the crew that would need. Add a request somebody has just asked you for and it lands on the chart in amber — the capacity strip turns red wherever it does not fit, a table names the weeks and how many person-days short they are, and “Crew options” puts the same work at one, two, three and four people side by side so you can see that effort and cost barely move while the date and the strain on the team move a great deal. Nothing a scenario does is saved until you commit it. The portfolio’s two old pictures of the same calendar — the milestone timeline and the project-spans strip — are now that one chart, with milestones as diamonds on their own project’s row, and the work breakdown gained the same chart and the same crew comparison. Separately: the tools scripts no longer carry anybody’s OneDrive URL, Jira project key or disk layout as parameter defaults — those live in tools.config.json outside the repository — and tools\\check-no-personal-data.ps1 scans for them before you publish.';
 
 
 

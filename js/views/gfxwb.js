@@ -16,9 +16,17 @@
 import * as S from '../store.js';
 import {
   h, raw, esc, icon, toast, dialog, formDlg, confirmDlg, menu, acts, bar,
-  fmtDate, fmtMoney, fmtMoneyFull, fmtNum, today, download, toCsv, clamp,
+  fmtDate, fmtMoney, fmtMoneyFull, fmtNum, today, addDays, download, toCsv, clamp,
 } from '../ui.js';
 import { SENIORITY, thisMonth } from '../calc.js';
+/* The Schedule panel is the Plan screen's chart and the Plan screen's maths,
+   reused rather than reimplemented — two tools that answer "what if two
+   people did it" with two different numbers is worse than having one. */
+import {
+  scopeBars, crewSweep, recommendCrew, workCalendar, periodGrid, supply,
+  loadGrid, nextWorkDay,
+} from '../plan.js';
+import { ganttHTML, capacityStripHTML, wireGantt, geometry, zoomOf } from '../gantt.js';
 import { bulkQueueDialog } from '../jiraui.js';
 import { openExternal } from '../teams.js';
 import {
@@ -259,6 +267,7 @@ function calcTab(ctx) {
     ${raw(head)}
     ${raw(totals)}
     ${raw(lines)}
+    ${raw(schedulePanel(draft, r))}
     ${raw(perDiv)}
     ${raw(feasPanel)}
     <section class="card">
@@ -281,6 +290,165 @@ function calcTab(ctx) {
         </div>
       </div>
     </section>`;
+}
+
+/* ---------- the schedule: this breakdown, on a calendar ------------------ */
+
+/*
+ * How wide a window the mini Gantt shows, and why it is derived.
+ *
+ * A fixed window would either clip a three-month scope or shrink a one-week
+ * one to a sliver at the far left. So it is the estimate's own span plus a
+ * fortnight of air, and the zoom steps down as the span grows.
+ */
+function draftWindow(bars, start) {
+  let from = start, to = start;
+  for (const b of bars) { if (b.start < from) from = b.start; if (b.end > to) to = b.end; }
+  from = addDays(from, -7);
+  to = addDays(to, 14);
+  const span = Math.max(1, Math.round((new Date(to) - new Date(from)) / 86400000));
+  const zoom = span <= 70 ? 'day' : span <= 280 ? 'week' : 'month';
+  return { from, to, zoom, span };
+}
+
+/**
+ * Turn the draft into the same shape a planning request has, so the crew
+ * comparison here and the one on the Plan screen are literally the same
+ * function.
+ *
+ * Two tools that answer "what if two people did it" with two different
+ * numbers is worse than having only one of them.
+ */
+const draftAsRequest = (draft, r) => ({
+  id: 'wb-draft',
+  name: draft.name || 'This estimate',
+  projectId: draft.projectId || '',
+  start: draft.startDate || nextWorkDay(today()),
+  deadline: draft.deadline || '',
+  parallel: draft.parallel !== false,
+  /* byDivision hours are pre-uplift; the request applies the same two
+     percentages, so the totals match the cards above to the decimal. */
+  reviewPct: r.reviewPct, contingencyPct: r.contPct,
+  lines: r.byDivision.filter(d => d.hours > 0)
+    .map(d => ({ division: d.division.id, hours: d.hours, seniority: d.seniority })),
+  crew: Object.fromEntries(r.byDivision.map(d => [d.division.id, d.crew])),
+});
+
+/**
+ * The Gantt, and the crew trade-off, inside the work breakdown.
+ *
+ * This is the half of an estimate a table cannot show: a scope is 400 hours
+ * whichever way you read it, but *when it lands* and *what it does to the
+ * team while it runs* are the two things the meeting actually argues about.
+ * The chart answers the first and the comparison answers the second, from
+ * the same numbers as the cards above.
+ */
+function schedulePanel(draft, r) {
+  if (!r.lines.length) return '';
+  const start = draft.startDate || nextWorkDay(today());
+  const { parent, children } = scopeBars({ ...draft, startDate: start });
+  const bars = [parent, ...children];
+  const win = draftWindow(bars, start);
+  const geo = geometry(win.from, win.to, zoomOf(win.zoom).dayPx);
+
+  /* Capacity under the bars, on the same pixel grid as the Plan screen — so
+     a week that is red here is the same week that is red there. */
+  const cal = workCalendar(win.from, win.to);
+  const periods = periodGrid(win.from, win.to, 'week', cal);
+  const sup = supply(periods, cal);
+  const load = loadGrid(bars, periods, cal, sup, { useAllocation: false });
+  const only = new Set(r.byDivision.map(d => d.division.id));
+
+  const req = draftAsRequest(draft, r);
+  const sweep = crewSweep(req, null, { max: 4, from: win.from, to: win.to,
+                                       grain: 'week', useAllocation: false });
+  const rec = recommendCrew(sweep);
+  const current = Math.max(1, Math.round(
+    r.byDivision.reduce((n, d) => n + d.crew, 0) / Math.max(1, r.byDivision.length)));
+
+  return h`
+  <section class="card gx-card" style="margin-bottom:14px">
+    <header><h3>Schedule</h3>
+      <span class="sub">${esc(fmtDate(start))} → ${esc(fmtDate(parent.end))} ·
+        ${n1(r.elapsedDays)} working days at the crew you set</span>
+      <div class="spacer" style="flex:1"></div>
+      <span class="gx-key"><i class="k-plan"></i>this breakdown</span>
+      <button class="btn sm subtle" data-act="go-plan" title="See it against every other project">
+        ${icon('cal')}Open in Plan</button></header>
+    ${raw(ganttHTML({
+      bars, from: win.from, to: win.to, zoom: win.zoom, sym: sym(),
+      periods: periods.map(p => p.from),
+      footer: capacityStripHTML(load, geo, { onlyDivisions: only, sym: sym() }),
+      emptyMsg: 'Set a start date to place this breakdown on a calendar.',
+    }))}
+    <div class="body">
+      <h4 style="margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-mute)">
+        What different crew sizes buy you</h4>
+      <p class="tiny mute" style="margin-bottom:10px;max-width:72ch;line-height:1.6">
+        Effort is ${n1(r.totalHours)} person-hours whoever does it, so <b>cost barely moves</b>.
+        What moves is the date and how hard the work leans on the team while it runs.
+      </p>
+      <div class="tbl-wrap"><table class="tbl compact">
+        <thead><tr><th>Crew per division</th><th>Lands</th><th class="num">Elapsed</th>
+          <th class="num">Cost</th><th class="num">Peak load</th><th class="num">Short by</th><th></th></tr></thead>
+        <tbody>${raw(sweep.map(x => {
+          const fits = x.shortfallDays < 0.5;
+          return `<tr class="${x.crew === current ? 'on' : ''}">
+            <td><b>${x.crew}</b> ${x.crew === 1 ? 'person' : 'people'}${x.crew === current ? ' <span class="chip">as set</span>' : ''}</td>
+            <td>${esc(fmtDate(x.finish, 'long'))}</td>
+            <td class="num">${n1(x.elapsedDays)}d<div class="tiny mute">${n1(x.elapsedDays / (cfgDaysPerWeek()))}w</div></td>
+            <td class="num">${fmtMoneyFull(x.cost, sym())}</td>
+            <td class="num ${x.peakPct > 100 ? 'bad' : ''}">${Number.isFinite(x.peakPct)
+              ? Math.round(x.peakPct) + '%' : '<span title="A division in this breakdown has nobody in it">no crew</span>'}</td>
+            <td class="num ${fits ? '' : 'bad'}">${fits ? '—' : '−' + n1(x.shortfallDays) + 'd'}</td>
+            <td class="act">${x.crew === current ? '' :
+              `<button class="btn sm subtle" data-act="use-crew" data-n="${x.crew}">Use ${x.crew}</button>`}</td>
+          </tr>`;
+        }).join(''))}</tbody>
+      </table></div>
+      ${raw(crewVerdict(rec, current))}
+    </div>
+  </section>`;
+}
+
+const cfgDaysPerWeek = () => Math.max(1, wbSettings().daysPerWeek || 5);
+
+/**
+ * The sentence under the crew table.
+ *
+ * Ordered by what the reader can do about it. An unstaffed division comes
+ * first because no crew size fixes it and every row will look broken until
+ * it is dealt with — saying "no crew size fits" while the real problem is an
+ * empty division sends the reader to change the wrong number.
+ */
+function crewVerdict(rec, current) {
+  const names = rec.unstaffed.map(d => d.label).join(', ');
+  if (rec.unstaffed.length) {
+    const alt = rec.cleanIgnoringUnstaffed;
+    return `<div class="banner risk" style="margin:12px 0 0"><div>
+      <b>Nobody is in ${esc(names)}, and this breakdown has work there.</b>
+      That is why every row is short, and no crew size changes it: put somebody in
+      ${rec.unstaffed.length === 1 ? 'that division' : 'those divisions'}, outsource that part,
+      or move the lines somewhere they can be done.
+      ${alt ? `Setting the rest aside, a crew of <b>${alt.crew}</b> would cover everything else.` : ''}
+    </div></div>`;
+  }
+  if (rec.clean && rec.clean.crew !== current) {
+    return `<div class="banner ok" style="margin:12px 0 0"><div>
+      <b>A crew of ${rec.clean.crew} is the smallest that fits.</b>
+      It lands ${esc(fmtDate(rec.clean.finish, 'long'))} and no division goes over its
+      available days while it runs.</div></div>`;
+  }
+  if (rec.clean) {
+    return `<div class="banner ok" style="margin:12px 0 0"><div>
+      <b>The crew you have set is the smallest that fits.</b>
+      It lands ${esc(fmtDate(rec.clean.finish, 'long'))} with nobody over their available days.
+    </div></div>`;
+  }
+  return `<div class="banner warn" style="margin:12px 0 0"><div>
+    <b>No crew size in this range fits without overloading somebody.</b>
+    Even the best of them leaves work uncovered in at least one week — move the start,
+    cut the scope, or plan to outsource part of it.</div></div>`;
 }
 
 const divColor = id => S.byId(S.get().divisions, id)?.color || 'var(--muted)';
@@ -1088,6 +1256,20 @@ export default {
         dirty = true; redraw();
       },
       parallel: el => { draft.parallel = el.checked; dirty = true; redraw(); },
+      /* One click from the crew comparison to actually setting that crew.
+         The table is only worth the space if the answer it gives is one
+         button away from being taken. */
+      'use-crew': el => {
+        const n = Math.max(0, Number(el.dataset.n) || 1);
+        const next = { ...(draft.crew || {}) };
+        for (const d of estimate(draft).byDivision) {
+          if (d.division.crew && d.hours > 0) next[d.division.id] = n;
+        }
+        draft.crew = next; dirty = true;
+        toast(`Crew set to ${n} on every division in this breakdown`, 'ok');
+        redraw();
+      },
+      'go-plan': () => ctx.go('plan'),
       line: el => {
         const id = el.closest('[data-l]').dataset.l;
         const l = draft.lines.find(x => x.id === id);
@@ -1302,6 +1484,16 @@ export default {
 
       /* --- rates --- */
       cfg: el => { setWbSetting({ [el.dataset.k]: Number(el.value) || 0 }); redraw(); },
+    });
+
+    /*
+     * The Schedule panel's chart. Wired read-only on purpose: the bars are
+     * a picture of a draft that is not saved yet, so dragging one would have
+     * nothing to write to. Its crew comparison is the editable part, and it
+     * edits the crew boxes above rather than the chart.
+     */
+    return wireGantt(host, {
+      onCell: () => toast('Open the Plan to see this week against every other project', '', 4000),
     });
   },
 };

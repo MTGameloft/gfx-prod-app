@@ -20,29 +20,19 @@ import {
   fmtDate, fmtMonth, fmtMoney, fmtMoneyFull, fmtNum, fmtPct, today, daysBetween, sum, groupBy, clamp,
   download, toCsv,
 } from '../ui.js';
-import { projectHealth, ragColor, capacity, monthRange, thisMonth, projectFinance } from '../calc.js';
+import { projectHealth, ragColor, capacity, thisMonth, projectFinance } from '../calc.js';
 import { openExternal } from '../teams.js';
 import { taskPanel, editTask } from '../taskui.js';
 import { bulkQueueDialog } from '../jiraui.js';
 import { divisionLabel } from '../jira.js';
 import { scopesFor, loggedEstimates, wbComplexity, wbApproach, wbDivision } from '../wb.js';
-import { buildScale, headBands, scalePrefs, scaleToggle, scaleAct, minScaleWidth } from '../timescale.js';
-import { milestonePanel, wireMilestones, rangeOf, bounds as tlBounds } from '../timeline.js';
-
-/**
- * Milestones shaped the way the shared timeline wants them.
- *
- * @param {object[]} list  projects to take milestones from
- */
-const msItems = list => list.flatMap(p => (p.milestones || [])
-  .filter(m => m.date)
-  .map(m => ({ id: m.id, name: m.name, date: m.date, from: m.start || '', status: m.status,
-               projectId: p.id, projectCode: p.code, projectName: p.name })));
-
-/** Open task due dates, as pips along the axis. */
-const msPips = ids => S.get().tasks
-  .filter(t => t.status !== 'done' && t.due && (!ids || ids.has(t.project)))
-  .map(t => ({ date: t.due, overdue: t.due < today(), title: t.title }));
+import { scaleAct } from '../timescale.js';
+import {
+  simulate, planWindow, WINDOWS,
+} from '../plan.js';
+import {
+  ganttHTML, capacityStripHTML, wireGantt, zoomToggle, zoomOf, geometry, scrollToToday,
+} from '../gantt.js';
 
 /* The tabs a project has. Order is the tab order. */
 const TABS = [
@@ -217,64 +207,153 @@ function taskBand(live) {
   </section>`;
 }
 
-/** One row per project, milestones as diamonds, across the coming 12 months. */
-/**
- * Project spans as bars, milestones as diamonds.
+/* ---------- the chart, shared with the Plan ------------------------------ */
+
+/*
+ * THE MERGE.
  *
- * The window is whatever the Overview's range buttons say, rather than a
- * hardcoded twelve months — so the range control governs both this and the
- * milestone timeline above it, and the two always show the same stretch of
- * time. Which is the point of having them on one page.
+ * This page used to carry two pictures of the same calendar: a milestone
+ * timeline (dots with cards, positioned in percent) and a "project spans"
+ * strip (bars with nothing in them). They were drawn by different code from
+ * different bounds, so a date on one did not reliably line up with the same
+ * date on the other — and neither of them could show the work, only its
+ * boundaries.
+ *
+ * Both are now one Gantt: project spans as outlined bars, milestones as
+ * diamonds ON their own project's row, and the scopes and estimated tasks
+ * inside each project as solid bars under it. Same renderer as the Plan
+ * screen, same simulation, so the portfolio and the planner cannot disagree
+ * about when anything is.
+ *
+ * What is deliberately NOT here is the scenario machinery. This page answers
+ * "where is everything"; the Plan answers "can we take more". Putting the
+ * what-ifs on both would make two places to edit the same thing.
  */
-function timeline() {
-  const s = S.get();
-  const b = tlBounds(rangeOf('portfolio'));
-  const first = b.from, last = b.to;
-  const months = monthRange(first, last);
-  const span = Math.max(1, daysBetween(first, last));
-  const pos = iso => clamp(daysBetween(first, iso) / span * 100, 0, 100);
 
-  const rows = s.projects.filter(p => p.status !== 'archived').map(p => {
-    const l = Math.max(0, pos(p.start)), r = Math.min(100, pos(p.end));
-    const ms = (p.milestones || []).filter(m => m.date >= first && m.date <= last).map(m => `
-      <span class="milestone-dot" style="left:${pos(m.date)}%;background:${m.status === 'done' ? 'var(--ok)' : m.status === 'at-risk' ? 'var(--risk)' : 'var(--warn)'}"
-            title="${esc(m.name)} — ${esc(fmtDate(m.date, 'long'))}"></span>`).join('');
-    return `<div class="gantt-row">
-      <div class="lbl trunc" title="${esc(p.name)}"><b>${esc(p.code)}</b> <span class="mute">${esc(p.name)}</span></div>
-      <div class="track">
-        ${months.map((_, i) => `<span class="gl" style="left:${(i / months.length) * 100}%"></span>`).join('')}
-        <div class="gantt-bar" style="left:${l}%;width:${Math.max(2, r - l)}%;background:${p.color}"
-             title="${esc(p.phase)}">${esc(p.phase)}</div>
-        ${ms}
-      </div></div>`;
-  }).join('');
+/** Remembered per chart, so a project's view and the portfolio's differ. */
+const gxPrefs = key => {
+  const by = S.get()?.prefs?.ganttBy;
+  const own = by && typeof by === 'object' ? by[key] : null;
+  return { range: '6m', zoom: 'week', capacity: true, ...(own || {}) };
+};
+const setGxPref = (key, patch) => S.mutate(s => {
+  s.prefs ||= {};
+  s.prefs.ganttBy = { ...(s.prefs.ganttBy || {}), [key]: { ...gxPrefs(key), ...patch } };
+}, { silent: true, noUndo: true, label: 'chart view' });
 
-  /*
-   * The scale is the shared one, so a date here means the same thing as a date
-   * on the Leave grid. With the date band on, a year is 365 columns — so the
-   * grid is given a minimum width and the panel scrolls, rather than squashing
-   * 365 unreadable slivers into the width of the card.
-   */
-  const scale = buildScale(first, last);
-  const show = scalePrefs('portfolio');
-  const minW = Math.max(760, 190 + minScaleWidth(scale, show));
+/**
+ * One Gantt card.
+ *
+ * @param {object} o
+ * @param {string} o.key        identity for the remembered range and zoom
+ * @param {string} o.title
+ * @param {Set|null} o.projects which projects, null for all live ones
+ * @param {string} [o.extra]    extra header buttons
+ */
+function ganttCard(o) {
+  const pref = gxPrefs(o.key);
+  const win = planWindow(pref.range);
+  const sim = simulate(null, {
+    ...win, grain: 'week', projects: o.projects || null,
+    showTasks: true, useAllocation: false,
+  });
+  const geo = geometry(sim.from, sim.to, zoomOf(pref.zoom).dayPx);
+  /* Only the divisions this selection actually touches. A project with no 3D
+     work does not need an empty 3D lane telling it so. */
+  const only = new Set(sim.bars.filter(b => b.divisionId).map(b => b.divisionId));
+  const work = sim.bars.filter(b => b.kind !== 'project').length;
 
   return h`
-  <section class="card">
-    <header><h3>Project spans</h3><span class="sub">${rangeOf('portfolio')} window · ◆ milestones</span>
+  <section class="card gx-card" style="margin-bottom:14px">
+    <header><h3>${esc(o.title)}</h3>
+      <span class="sub">${work} piece${work === 1 ? '' : 's'} of work · ◆ milestones ·
+        ${esc(fmtDate(sim.from))} → ${esc(fmtDate(sim.to))}</span>
       <div class="spacer" style="flex:1"></div>
-      ${raw(scaleToggle('portfolio'))}</header>
-    <div class="body flush gantt"><div class="gantt-grid" style="min-width:${minW}px">
-      <div class="gantt-head">
-        <div class="lbl">Project</div>
-        <div class="cells">${raw(headBands(scale, show, { width: minW - 190 }))}</div>
+      <div class="seg">
+        ${raw(WINDOWS.map(([k, l]) => `<button data-act="gx-range" data-v="${k}" data-gk="${esc(o.key)}"
+          class="${pref.range === k ? 'on' : ''}" title="${esc(l)}">${k}</button>`).join(''))}
       </div>
-      <div style="position:relative">
-        <div class="gantt-today" style="left:calc(190px + (100% - 190px) * ${pos(today()) / 100})" title="Today"></div>
-        ${raw(rows)}
-      </div>
-    </div></div>
+      ${raw(zoomToggle(pref.zoom).replace(/data-act="gx-zoom"/g, `data-act="gx-zoom" data-gk="${esc(o.key)}"`))}
+      <label class="gx-tog" title="Show the team's available days under the chart">
+        <input type="checkbox" data-change="gx-cap" data-gk="${esc(o.key)}" ${pref.capacity ? 'checked' : ''}>
+        <span>Capacity</span></label>
+      ${raw(o.extra || '')}</header>
+    ${raw(ganttHTML({
+      bars: sim.bars, from: sim.from, to: sim.to, zoom: pref.zoom, sym: symOf(),
+      periods: sim.periods.map(p => p.from),
+      footer: pref.capacity && only.size
+        ? capacityStripHTML(sim.load, geo, { onlyDivisions: only, sym: symOf() }) : '',
+      emptyMsg: 'Nothing in this window. Widen the range, or add a milestone or an estimate.',
+    }))}
+    <div class="gx-hintbar tiny mute">
+      Click a bar to open it · drag a scope or a task to move it ·
+      <b data-act="k-plan" style="cursor:pointer;text-decoration:underline">open the Plan</b>
+      to test an extra request against this
+    </div>
   </section>`;
+}
+
+const symOf = () => S.get().settings.currencySymbol || '$';
+
+/** The handlers every Gantt card needs. Spread into a view's `acts` map. */
+const ganttActs = ctx => ({
+  'gx-range': el => { setGxPref(el.dataset.gk, { range: el.dataset.v }); ctx.rerender(); },
+  'gx-zoom':  el => { setGxPref(el.dataset.gk, { zoom: el.dataset.z }); ctx.rerender(); },
+  'gx-cap':   el => { setGxPref(el.dataset.gk, { capacity: el.checked }); ctx.rerender(); },
+  'k-plan':   () => ctx.go('plan'),
+});
+
+/**
+ * Wire a card's chart. Clicking a bar opens what it stands for; dragging one
+ * moves it, through the same handlers the Plan uses — a scope's start date,
+ * a task's due date. Nothing here writes on hover or on move, only on drop.
+ */
+function wireGanttCard(host, ctx) {
+  /* Open on the useful part. A 6-month window that starts a fortnight ago
+     would otherwise open at its left edge, so the first thing you see is a
+     fortnight of history rather than the work in front of you. */
+  const pref = gxPrefs(host.querySelector('[data-gk]')?.dataset.gk || 'portfolio');
+  const win = planWindow(pref.range);
+  scrollToToday(host, { from: win.from, to: win.to, zoom: pref.zoom });
+
+  return wireGantt(host, {
+    onFold: id => { foldToggle(id); ctx.rerender(); },
+    onOpen: b => {
+      if (b.kind === 'project') return ctx.go('projects', b.ref);
+      if (b.kind === 'task') return editTask(b.ref).then(r => r && ctx.rerender());
+      if (b.kind === 'scope' || b.id.startsWith('scope:')) return ctx.go('gfxwb', 'estimates');
+    },
+    onMilestone: m => ctx.go('projects', m.projectId, 'milestones'),
+    onMove: d => moveGanttBar(d, ctx),
+    onResize: () => { toast('Change how long work may take on the Plan, where the crew maths lives', '', 5000); ctx.rerender(); },
+    onCell: () => ctx.go('plan'),
+  });
+}
+
+/* Collapsed rows, per page load. UI, not data — see the Plan for the same
+   choice and the same reasoning. */
+let folded = new Set();
+const foldToggle = id => { if (folded.has(id)) folded.delete(id); else folded.add(id); };
+
+async function moveGanttBar({ ref, kind, newStart, newEnd }, ctx) {
+  const { saveEstimate, wbEstimates } = await import('../wb.js');
+  const { nextWorkDay } = await import('../plan.js');
+
+  if (kind === 'scope') {
+    const e = wbEstimates().find(x => x.id === ref);
+    if (!e) return;
+    const next = nextWorkDay(newStart);
+    saveEstimate({ ...e, startDate: next });
+    toast(`“${e.name || 'Estimate'}” now starts ${fmtDate(next, 'long')}`, 'ok');
+  } else if (kind === 'task') {
+    /* A task's bar ends on its due date, so the drag moves that. */
+    const t = S.get().tasks.find(x => x.id === ref);
+    if (!t || !t.due) return;
+    const next = nextWorkDay(newEnd);
+    S.update('tasks', ref, { due: next }, { label: 'move task' });
+    toast(`“${t.title}” is now due ${fmtDate(next, 'long')}`, 'ok');
+  }
+  ctx.rerender();
 }
 const addM = (ym, n) => { const [y, m] = ym.split('-').map(Number); const d = new Date(y, m - 1 + n, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
 const lastDay = ym => { const [y, m] = ym.split('-').map(Number); return `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`; };
@@ -417,17 +496,14 @@ function tabOverview(p) {
   const queued = s.tasks.filter(t => t.project === p.id && t.jira?.state === 'queued').length;
   const filed  = s.tasks.filter(t => t.project === p.id && t.jira?.key).length;
 
-  /* The same timeline as the dashboard and the portfolio, narrowed to this
-     project — its own remembered range and scale, because a project you are
-     about to ship is a different question from the portfolio. */
-  const tl = milestonePanel({
-    title: 'Milestones',
-    sub: p.code,
-    items: msItems([p]),
-    pips: msPips(new Set([p.id])),
+  /* The same chart as the portfolio and the Plan, narrowed to this project —
+     its own remembered range and zoom, because a project you are about to
+     ship is a different question from the portfolio. */
+  const tl = ganttCard({
     key: `proj:${p.id}`,
-    emptyMsg: 'No milestones in this window. Widen the range, or add one on the Milestones tab.',
-    extra: '<button class="btn sm subtle" data-act="tab" data-t="milestones">Manage →</button>',
+    title: `${p.code} — schedule`,
+    projects: new Set([p.id]),
+    extra: '<button class="btn sm subtle" data-act="tab" data-t="milestones">Milestones →</button>',
   });
 
   return h`
@@ -891,6 +967,7 @@ export default {
           ]);
         },
         'ts-row': scaleAct(() => ctx.rerender()),
+        ...ganttActs(ctx),
         'go-wb': () => ctx.go('gfxwb', 'calc'),
 
         /* --- the division panel on a division-tied project --- */
@@ -966,9 +1043,10 @@ export default {
           ]);
         },
       });
-      /* The milestone panel is measured after it is in the document, and its
-         range buttons and milestone clicks are wired the same way everywhere. */
-      return wireMilestones(host, ctx);
+      /* The chart is wired the same way on every page that shows one: a bar
+         opens what it stands for, a drag moves a date, nothing writes until
+         the pointer is released. */
+      return wireGanttCard(host, ctx);
     }
 
     ctx.setTitle();
@@ -980,15 +1058,12 @@ export default {
         ${raw(live.map(portfolioCard).join(''))}
       </div>
       ${raw(taskBand(live))}
-      <div style="margin-bottom:14px">${raw(milestonePanel({
-        title: 'Milestones ahead',
-        items: msItems(live),
-        pips: msPips(new Set(live.map(p => p.id))),
+      ${raw(ganttCard({
         key: 'portfolio',
-        emptyMsg: 'No milestones in this window. Widen the range, or add one on a project.',
+        title: 'The portfolio on one calendar',
+        projects: null,
         extra: '<button class="btn sm subtle" data-act="k-tasks">All tasks →</button>',
-      }))}</div>
-      ${raw(timeline())}
+      }))}
       ${raw(s.projects.some(p => p.status === 'archived') ? `
         <details style="margin-top:14px"><summary class="tiny mute" style="cursor:pointer">Archived projects</summary>
           <div class="grid g3" style="margin-top:10px">${s.projects.filter(p => p.status === 'archived').map(portfolioCard).join('')}</div>
@@ -998,11 +1073,12 @@ export default {
       open: el => ctx.go('projects', el.closest('[data-id]').dataset.id),
       'open-tasks': el => ctx.go('projects', el.closest('[data-id]').dataset.id, 'tasks'),
       'ts-row': scaleAct(() => ctx.rerender()),
+      ...ganttActs(ctx),
       'k-projects': () => host.querySelector('.grid.g3')?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
       'k-tasks':   () => ctx.go('tasks'),
       'k-finance': () => ctx.go('finance'),
     });
 
-    return wireMilestones(host, ctx);
+    return wireGanttCard(host, ctx);
   },
 };
