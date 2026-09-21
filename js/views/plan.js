@@ -766,6 +766,7 @@ export default {
         ${raw(ganttHTML({
           bars: sim.bars, from: sim.from, to: sim.to, zoom: ui.zoom,
           collapsed, periods: periodLines, footer, sym: sym(), height: ui.height,
+          addLabel: 'Add work',
           emptyMsg: 'Nothing scheduled in this window. Log a work-breakdown estimate, '
                   + 'give a task an estimate and a due date, or add a request below.',
         }))}
@@ -796,6 +797,31 @@ export default {
          variable on the live element, so re-rendering here would rebuild the
          whole chart mid-gesture and throw the scroll position away. */
       onHeight: px => { ui.height = px; saveUi(); },
+      /*
+       * Creating work from the chart.
+       *
+       * Three kinds are reachable from here and they are genuinely
+       * different, so this asks rather than guessing: a task is a thing to
+       * do, a scope is a quoted piece of work with a breakdown behind it,
+       * and a request is a what-if that is not committed to anything.
+       */
+      onAdd: (el, ev) => {
+        const only = ui.projects.length === 1 ? ui.projects[0] : '';
+        menu(ev, [
+          { label: 'New task…', icon: 'check', run: () =>
+            import('./tasks.js').then(m => m.editTask(null, only ? { project: only } : {})
+              .then(r => r && ctx.rerender())) },
+          { label: 'New work-breakdown estimate…', icon: 'sheet', run: () =>
+            ctx.go('gfxwb', 'calc') },
+          '-',
+          { label: 'New request (what-if)…', icon: 'plus', run: async () => {
+            let scn = activeScenario();
+            if (!scn) { scn = newScenario({ name: 'What if…' }); scenarios.push(scn); activeId = scn.id; }
+            const r = await editRequest(null);
+            if (r) { scn.requests.push(r); ctx.rerender(); }
+          } },
+        ]);
+      },
     });
 
     scrollToToday(host, { from: sim.from, to: sim.to, zoom: ui.zoom });

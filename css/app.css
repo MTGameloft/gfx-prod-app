@@ -1229,9 +1229,21 @@ table.tbl tfoot td {
  */
 .gx-scroll {
   overflow: auto;
-  max-height: var(--gx-h, min(62vh, 640px));
+  max-height: min(62vh, 640px);
   overscroll-behavior-x: contain;
 }
+/*
+ * Once a height has been dragged it becomes a REAL height, not a cap.
+ *
+ * As a max-height the panel shrink-wrapped its bars, so on a chart with four
+ * pieces of work the handle could only ever make it smaller — dragging down
+ * did nothing, which is what was reported. With an explicit height the chart
+ * can be taller than its contents, and the empty stretch below the work is
+ * ruled into rows by `.gx-fill` so the calendar simply continues. That empty
+ * space is the whole point: it is where you look to see whether there is
+ * room for something.
+ */
+.gx.h-set .gx-scroll { height: var(--gx-h); max-height: none; }
 
 .gx-grip-h {
   height: 11px; cursor: ns-resize; display: flex; align-items: center; justify-content: center;
@@ -1246,7 +1258,12 @@ table.tbl tfoot td {
 .gx-grip-h.on { background: var(--accent-soft); }
 .gx-grip-h.on > span { background: var(--accent); width: 62px; }
 .gx-grip-h:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.gx-canvas { position: relative; min-width: 100%; }
+/* A flex column so the body can stretch to fill a dragged height; min-height
+   100% is what makes "taller than the content" possible at all. */
+.gx-canvas {
+  position: relative; min-width: 100%; min-height: 100%;
+  display: flex; flex-direction: column;
+}
 
 /* ---- header ------------------------------------------------------------- */
 
@@ -1283,13 +1300,45 @@ table.tbl tfoot td {
 
 /* ---- body --------------------------------------------------------------- */
 
-.gx-body { display: flex; align-items: flex-start; }
+/* `stretch`, not `flex-start`: both columns must reach the bottom of the
+   panel so the ruled empty rows below the work line up across the divide. */
+.gx-body { display: flex; align-items: stretch; flex: 1 1 auto; min-height: 0; }
 
 .gx-col-lbl {
   flex: 0 0 var(--gx-label); position: sticky; left: 0; z-index: 10;
   background: var(--bg-elev); border-right: 1px solid var(--line);
+  display: flex; flex-direction: column;
 }
-.gx-col-time { position: relative; flex: none; }
+.gx-col-time { position: relative; flex: none; display: flex; flex-direction: column; }
+
+/*
+ * The empty calendar below the work.
+ *
+ * Ruled by a repeating gradient rather than by real elements: it costs no
+ * DOM, and it fills whatever height the panel has been dragged to without
+ * anyone having to work out how many rows that is. The weekend shading and
+ * the gridlines come free, because `.gx-backdrop` is inset:0 on a column
+ * that is now full height.
+ */
+.gx-fill {
+  flex: 1 1 auto; min-height: 0;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0 calc(var(--gx-row) - 1px),
+    var(--line-soft) calc(var(--gx-row) - 1px) var(--gx-row));
+}
+
+/* The one place you can create work from the chart itself. */
+.gx-add {
+  height: var(--gx-row); display: flex; align-items: center; gap: 6px;
+  padding-left: 12px; font-size: 11.5px; font-weight: 600;
+  color: var(--text-mute); cursor: pointer; flex: none;
+  border-bottom: 1px solid var(--line-soft);
+  transition: color var(--t-fast), background var(--t-fast);
+}
+.gx-add:hover { color: var(--accent); background: var(--accent-soft); }
+.gx-add:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.gx-track-add { background: transparent; }
 
 .gx-lbl {
   height: var(--gx-row); display: flex; align-items: center; gap: 5px;
@@ -1658,3 +1707,32 @@ table.tbl tr.on { background: var(--accent-soft); }
 .gx-budget .gx-budget-t { flex: 1; min-width: 240px; color: var(--text-dim); }
 .gx-budget > b { font-size: 13px; font-variant-numeric: tabular-nums; }
 .gx-budget > i { font-style: normal; font-size: 10.5px; color: var(--text-mute); }
+
+/* ---- work-breakdown row reordering ------------------------------------- */
+
+.wb-grip {
+  width: 26px; padding-left: 4px !important; padding-right: 0 !important;
+  color: var(--text-mute); cursor: grab; vertical-align: middle;
+  opacity: 0; transition: opacity var(--t-fast), color var(--t-fast);
+}
+tr:hover > .wb-grip { opacity: 1; }
+.wb-grip:hover { color: var(--text); }
+.wb-grip:active { cursor: grabbing; }
+.wb-grip svg { width: 14px; height: 14px; display: block; }
+tr.wb-dragging { opacity: .45; background: var(--accent-soft); }
+tr.wb-dragging > td { border-top: 1px solid var(--accent); border-bottom: 1px solid var(--accent); }
+
+/* The crew read-out in the Estimates table. Per division, because one total
+   cannot say whether five people are on one discipline or spread across
+   five — and those are entirely different schedules. */
+.gx-crew {
+  display: inline-flex; align-items: baseline; gap: 3px; margin-right: 4px;
+  font-size: 10.5px; padding: 1px 7px; border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--chip, var(--muted)) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--chip, var(--muted)) 38%, transparent);
+  color: var(--text-dim); white-space: nowrap;
+}
+.gx-crew b { font-size: 12px; color: var(--text); font-variant-numeric: tabular-nums; }
+.gx-crew i { font-style: normal; color: var(--text-mute); }
+.gx-crew.bad { border-color: var(--risk); }
+.gx-crew.bad b { color: var(--risk); }

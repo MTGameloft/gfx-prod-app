@@ -285,6 +285,7 @@ function ganttCard(o) {
          not. Caught by testing both charts rather than only the one the
          change was about. */
       collapsed: folded,
+      addLabel: o.projects && o.projects.size === 1 ? 'Add work to this project' : 'Add work',
       periods: sim.periods.map(p => p.from),
       footer: pref.capacity && only.size
         ? capacityStripHTML(sim.load, geo, { onlyDivisions: only, sym: symOf() }) : '',
@@ -327,6 +328,13 @@ function wireGanttCard(host, ctx) {
     /* Silent: the drag has already set the variable on the live element, and
        re-rendering mid-gesture would rebuild the chart and lose the scroll. */
     onHeight: px => setGxPref(key, { height: px }),
+    /* On a single project the chart already knows which one, so the task
+       opens with it filled in; on the portfolio it is the ordinary dialog
+       with a project to pick. */
+    onAdd: () => {
+      const pid = key.startsWith('proj:') ? key.slice(5) : '';
+      editTask(null, pid ? { project: pid } : {}).then(r => r && ctx.rerender());
+    },
     onFold: id => { foldToggle(id); ctx.rerender(); },
     onOpen: b => {
       if (b.kind === 'project') return ctx.go('projects', b.ref);

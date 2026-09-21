@@ -173,13 +173,18 @@ function calcTab(ctx) {
       <button class="btn sm subtle" data-act="csv">${icon('down')}CSV</button></header>
     <div class="body flush"><div class="tbl-wrap"><table class="tbl">
       <thead><tr>
-        <th style="width:60px">Div</th><th>Work item</th>
+        <th style="width:26px" aria-label="Reorder"></th><th style="width:60px">Div</th><th>Work item</th>
         <th style="width:118px">Complexity</th><th style="width:132px">Approach</th>
         <th class="num" style="width:64px">Qty</th><th class="num" style="width:62px">Base h</th>
         <th class="num" style="width:74px">Hours</th><th style="width:120px">Rung</th>
         <th class="num" style="width:92px">Cost</th><th></th>
       </tr></thead>
-      <tbody>${raw(r.lines.length ? r.lines.map(l => `<tr data-l="${l.id}">
+      <tbody data-wb-rows>${raw(r.lines.length ? r.lines.map(l => `<tr data-l="${l.id}" draggable="true">
+        <td class="wb-grip" title="Drag to reorder">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/>
+            <circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/>
+            <circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></td>
         <td><span class="pill-div" style="background:${esc(divColor(l.division))}">${esc(l.division)}</span></td>
         <td><b>${esc(l.name)}</b>${l.note ? `<div class="tiny mute">${esc(l.note)}</div>` : ''}</td>
         <td><select data-change="line" data-k="complexity" style="width:100%">${
@@ -195,14 +200,14 @@ function calcTab(ctx) {
           sel(SENIORITY.map(x => ({ v: x, t: x })), l.seniority || l.seniorityUsed)}</select></td>
         <td class="num">${fmtMoneyFull(l.cost, sym())}</td>
         <td class="act"><button class="btn icon sm subtle" data-act="line-menu"><svg class="ico"><use href="#i-dots"></use></svg></button></td>
-      </tr>`).join('') : `<tr><td colspan="10" class="tiny mute" style="padding:26px;text-align:center">
+      </tr>`).join('') : `<tr><td colspan="11" class="tiny mute" style="padding:26px;text-align:center">
         Nothing yet. <b>Add work item</b> to start, or <b>Preset</b> for a common deliverable.</td></tr>`)}
       </tbody>
       ${raw(r.lines.length ? `<tfoot><tr>
-        <td colspan="6" class="tiny mute" style="text-align:right">raw effort</td>
+        <td colspan="7" class="tiny mute" style="text-align:right">raw effort</td>
         <td class="num"><b>${n1(r.effortHours)}</b></td><td></td>
         <td class="num"><b>${fmtMoneyFull(r.baseCost, sym())}</b></td><td></td></tr>
-        <tr><td colspan="6" class="tiny mute" style="text-align:right">+ ${r.reviewPct}% review + ${r.contPct}% contingency</td>
+        <tr><td colspan="7" class="tiny mute" style="text-align:right">+ ${r.reviewPct}% review + ${r.contPct}% contingency</td>
         <td class="num"><b>${n1(r.totalHours)}</b></td><td></td>
         <td class="num"><b>${fmtMoneyFull(r.totalCost, sym())}</b></td><td></td></tr></tfoot>` : '')}
     </table></div></div>
@@ -419,6 +424,63 @@ function schedulePanel(draft, r) {
 const cfgDaysPerWeek = () => Math.max(1, wbSettings().daysPerWeek || 5);
 
 /**
+ * Drag to reorder the breakdown.
+ *
+ * The order of lines is not cosmetic here. Read top to bottom it is the story
+ * of how the deliverable gets made — references, then design, then model,
+ * then rig — and until now the only way to change it was to delete a line and
+ * add it again at the end. It also matters on the chart: a SEQUENTIAL
+ * estimate chains its divisions in order, so moving a line can move the
+ * finish date.
+ *
+ * Follows the sidebar's pattern in app.js: reorder the DOM live during the
+ * drag, then read the final order back off the DOM on drop rather than
+ * tracking indices through every move. One source of truth, and it cannot
+ * drift from what the eye just saw.
+ *
+ * Deliberately NOT a re-render per dragover: rebuilding the table mid-drag
+ * destroys the element being dragged and the gesture dies with it.
+ */
+function wireLineDnd(root, onCommit) {
+  const body = root.querySelector('[data-wb-rows]');
+  if (!body || body.dataset.dnd) return;
+  body.dataset.dnd = '1';
+
+  let dragEl = null;
+
+  body.addEventListener('dragstart', e => {
+    const tr = e.target.closest('tr[data-l]');
+    if (!tr) return;
+    dragEl = tr;
+    tr.classList.add('wb-dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    /* Firefox refuses to start a drag without data on the transfer. */
+    e.dataTransfer.setData('text/plain', tr.dataset.l);
+  });
+
+  body.addEventListener('dragover', e => {
+    if (!dragEl) return;
+    const over = e.target.closest('tr[data-l]');
+    if (!over || over === dragEl) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const r = over.getBoundingClientRect();
+    const below = (e.clientY - r.top) > r.height / 2;
+    body.insertBefore(dragEl, below ? over.nextSibling : over);
+  });
+
+  body.addEventListener('drop', e => { if (dragEl) e.preventDefault(); });
+
+  body.addEventListener('dragend', () => {
+    if (!dragEl) return;
+    dragEl.classList.remove('wb-dragging');
+    dragEl = null;
+    const order = [...body.querySelectorAll('tr[data-l]')].map(tr => tr.dataset.l);
+    onCommit(order);
+  });
+}
+
+/**
  * The sentence under the crew table.
  *
  * Ordered by what the reader can do about it. An unstaffed division comes
@@ -521,6 +583,35 @@ const EST_STATUS = [
 ];
 const estStatus = id => EST_STATUS.find(x => x.id === id) || EST_STATUS[0];
 
+/**
+ * The crew an estimate was costed at, per division.
+ *
+ * Shown per division rather than as one total, because a total is the one
+ * number that means nothing here: "5" could be five people on 2D or one each
+ * across five disciplines, and those are completely different schedules.
+ * Duration divides by the crew of each division separately — see wb.js — so
+ * the breakdown is the only honest summary.
+ *
+ * Divisions carrying no hours are left out: a crew box set to 2 on a
+ * discipline this deliverable does not touch is noise, not information.
+ */
+function crewCell(c) {
+  const lanes = c.byDivision.filter(d => d.hours > 0 && d.division.crew);
+  if (!lanes.length) return '<span class="mute">—</span>';
+  const same = lanes.every(d => d.crew === lanes[0].crew);
+  /* One number when every division is staffed the same, which is the common
+     case and reads far better than five identical chips. */
+  if (same) {
+    return `<span class="gx-crew${lanes[0].crew === 0 ? ' bad' : ''}"
+      title="${esc(lanes.map(d => `${d.division.id}: ${d.crew}`).join(' · '))}">
+      <b>${lanes[0].crew}</b>×<i>${lanes.length === 1 ? esc(lanes[0].division.id) : 'all'}</i></span>`;
+  }
+  return lanes.map(d => `<span class="gx-crew${d.crew === 0 ? ' bad' : ''}"
+      style="--chip:${esc(divColor(d.division.id))}"
+      title="${esc(d.division.label)} — ${n1(d.hours)}h at a crew of ${d.crew} = ${n1(d.elapsedDays)} days">
+      ${esc(d.division.id)} <b>${d.crew}</b>×</span>`).join(' ');
+}
+
 function estimatesTab(ctx) {
   const s = S.get();
   const all = wbEstimates();
@@ -564,6 +655,7 @@ function estimatesTab(ctx) {
 
   <div class="card" style="margin-bottom:14px"><div class="tbl-wrap"><table class="tbl">
     <thead><tr><th>Deliverable</th><th>Project</th><th>Approach</th><th class="num">Effort h</th>
+      <th title="People per division, as the estimate was saved. Crew divides duration and never changes cost.">Crew</th>
       <th class="num">Duration</th><th class="num">Cost</th><th>Status</th><th>Updated</th><th></th></tr></thead>
     <tbody>${raw(list.map(e => {
       const c = estimate(e);
@@ -576,13 +668,14 @@ function estimatesTab(ctx) {
         <td>${p ? `<span class="chip" style="background:${p.color}22;color:${p.color}">${esc(p.code)}</span>` : '<span class="mute">—</span>'}</td>
         <td class="tiny">${esc(c.approaches.map(a => a.label).join(', ') || '—')}</td>
         <td class="num">${n1(c.totalHours)}</td>
+        <td class="tiny">${crewCell(c)}</td>
         <td class="num tiny">${n1(c.elapsedDays)}d<div class="mute">${n1(c.elapsedWeeks)}w</div></td>
         <td class="num">${fmtMoneyFull(c.totalCost, sym())}</td>
         <td><span class="chip ${st.chip}">${esc(st.label)}</span></td>
         <td class="tiny mute">${esc(fmtDate(new Date(e.updated || e.created).toISOString().slice(0, 10)))}</td>
         <td class="act"><button class="btn icon sm subtle" data-act="est-menu"><svg class="ico"><use href="#i-dots"></use></svg></button></td>
       </tr>`;
-    }).join('') || '<tr><td colspan="9" class="tiny mute" style="padding:20px;text-align:center">Nothing with that status.</td></tr>')}</tbody>
+    }).join('') || '<tr><td colspan="10" class="tiny mute" style="padding:20px;text-align:center">Nothing with that status.</td></tr>')}</tbody>
   </table></div></div>
 
   ${raw(roll.byDivision.length ? `
@@ -1176,6 +1269,10 @@ function csvEstimates() {
       Deliverable: e.name, Project: S.projectName(e.projectId) || '',
       Approach: c.approaches.map(a => a.label).join(' + '), Status: e.status, Lines: c.lines.length,
       EffortHours: Math.round(c.totalHours * 10) / 10,
+      /* Per division, for the same reason the column is: a single total
+         cannot say whether five people are on one discipline or five. */
+      Crew: c.byDivision.filter(d => d.hours > 0 && d.division.crew)
+             .map(d => `${d.division.id}:${d.crew}`).join(' '),
       ElapsedDays: Math.round(c.elapsedDays * 10) / 10,
       Cost: Math.round(c.totalCost), Review: c.reviewPct, Contingency: c.contPct,
       Start: e.startDate || '', Lands: c.finish || '', Notes: e.notes || '',
@@ -1497,6 +1594,20 @@ export default {
      * nothing to write to. Its crew comparison is the editable part, and it
      * edits the crew boxes above rather than the chart.
      */
+    /* Reordering the breakdown. Only the Calculator has the lines table; on
+       the other tabs this finds nothing and does nothing. */
+    wireLineDnd(host, order => {
+      if (!draft?.lines) return;
+      const by = new Map(draft.lines.map(l => [l.id, l]));
+      const next = order.map(id => by.get(id)).filter(Boolean);
+      /* Anything the DOM did not account for keeps its place at the end
+         rather than being dropped — a reorder must never lose a line. */
+      for (const l of draft.lines) if (!order.includes(l.id)) next.push(l);
+      draft.lines = next;
+      dirty = true;
+      redraw();
+    });
+
     return wireGantt(host, {
       /* Folding was not wired here at all, so the arrow and the row were dead
          controls — worse than not offering them. */

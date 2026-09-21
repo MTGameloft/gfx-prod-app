@@ -283,10 +283,13 @@ function barCell(bar, geo, sym) {
  *                               Owned by the caller so it can be persisted
  *                               wherever that view keeps its preferences —
  *                               this module stays free of the store.
+ * @param {string} [o.addLabel]  when set, an "add" row at the foot of the
+ *                               label column that calls `onAdd`. Omit it on a
+ *                               chart where creating work makes no sense.
  */
 export function ganttHTML({ bars, from, to, zoom = 'week', collapsed = new Set(),
                             periods = [], footer = '', emptyMsg = 'Nothing scheduled in this window.',
-                            sym = '$', maxRows = 400, height = 0 } = {}) {
+                            sym = '$', maxRows = 400, height = 0, addLabel = '' } = {}) {
   const z = zoomOf(zoom);
   const geo = geometry(from, to, z.dayPx);
   const cal = workCalendar(from, to);
@@ -325,12 +328,26 @@ export function ganttHTML({ bars, from, to, zoom = 'week', collapsed = new Set()
   const todayX = (today() >= from && today() <= to)
     ? `<div class="gx-today" style="left:${geo.x(today()) + geo.dayPx / 2}px"><b>Today</b></div>` : '';
 
-  /* How tall the chart can be before it scrolls. The height the user dragged
-     to wins; otherwise the CSS default, which is viewport-relative. */
+  /*
+   * How tall the chart is.
+   *
+   * Until a height is dragged this is a MAX-height, so a chart with four rows
+   * takes four rows' worth of page. Once dragged it becomes a real height and
+   * the chart can be taller than its contents — which is the point: an empty
+   * stretch of calendar below the work is where you look to see whether there
+   * is room, and a panel that shrink-wraps its bars can never show you that.
+   * `h-set` is the switch, and the empty space is ruled into rows by a
+   * gradient on `.gx-fill` so the grid simply continues.
+   */
   const hVar = height > 0 ? `;--gx-h:${Math.round(height)}px` : '';
+  const addRow = addLabel
+    ? `<div class="gx-add" data-act="gx-add" role="button" tabindex="0"
+         title="${esc(addLabel)}">+ <span>${esc(addLabel)}</span></div>`
+    : '';
 
   return `
-  <div class="gx" data-gx style="--gx-label:${LABEL_W}px;--gx-row:${ROW_H}px;--gx-bar:${BAR_H}px${hVar}">
+  <div class="gx${height > 0 ? ' h-set' : ''}" data-gx
+       style="--gx-label:${LABEL_W}px;--gx-row:${ROW_H}px;--gx-bar:${BAR_H}px${hVar}">
     <div class="gx-scroll" data-gx-scroll>
       <div class="gx-canvas" style="width:${LABEL_W + geo.width}px">
 
@@ -340,12 +357,14 @@ export function ganttHTML({ bars, from, to, zoom = 'week', collapsed = new Set()
         </div>
 
         <div class="gx-body">
-          <div class="gx-col-lbl">${labels}</div>
+          <div class="gx-col-lbl">${labels}${addRow}<div class="gx-fill"></div></div>
           <div class="gx-col-time" style="width:${geo.width}px" data-gx-time data-daypx="${geo.dayPx}"
                data-from="${esc(from)}" data-to="${esc(to)}">
             <div class="gx-backdrop">${backdrop(geo, cal, periods)}</div>
             ${todayX}
             ${tracks}
+            ${addLabel ? '<div class="gx-track gx-track-add"></div>' : ''}
+            <div class="gx-fill"></div>
           </div>
         </div>
 
@@ -443,6 +462,9 @@ export function wireGantt(host, handlers = {}) {
   let drag = null, dragged = false;
 
   const click = e => {
+    const add = e.target.closest('[data-act="gx-add"]');
+    if (add) { e.stopPropagation(); handlers.onAdd?.(add, e); return; }
+
     const fold = e.target.closest('[data-act="gx-fold"]');
     if (fold) { e.stopPropagation(); handlers.onFold?.(fold.dataset.b); return; }
 
@@ -473,6 +495,16 @@ export function wireGantt(host, handlers = {}) {
     }
   };
   gx.addEventListener('click', click);
+  /* The add row is a div with role=button, so it has to answer the keyboard
+     itself — a control you can tab to and then not activate is worse than
+     one you cannot reach. */
+  gx.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const add = e.target.closest?.('[data-act="gx-add"]');
+    if (!add) return;
+    e.preventDefault();
+    handlers.onAdd?.(add, e);
+  });
 
   /* ---- drag the bottom edge to resize the chart ------------------------- */
 
@@ -496,6 +528,10 @@ export function wireGantt(host, handlers = {}) {
     if (e.button !== 0 || !scroller) return;
     e.preventDefault();
     hDrag = { y0: e.clientY, h0: scroller.getBoundingClientRect().height };
+    /* Switch to a real height the moment a drag starts, so the very first
+       downward drag can already grow past the content instead of appearing
+       to do nothing until the next render. */
+    gx.classList.add('h-set');
     grip.classList.add('on');
     document.body.style.cursor = 'ns-resize';
     document.body.style.userSelect = 'none';
@@ -518,6 +554,7 @@ export function wireGantt(host, handlers = {}) {
      way back to the default has to be obvious, or a bad drag is permanent. */
   const hReset = () => {
     gx.style.removeProperty('--gx-h');
+    gx.classList.remove('h-set');      // back to shrink-to-content
     handlers.onHeight?.(0);
   };
   /* Keyboard, because a drag handle that only takes a mouse is not a control
@@ -532,6 +569,7 @@ export function wireGantt(host, handlers = {}) {
     else return;
     e.preventDefault();
     h = Math.max(MIN_H, Math.round(h));
+    gx.classList.add('h-set');
     gx.style.setProperty('--gx-h', h + 'px');
     handlers.onHeight?.(h);
   };
