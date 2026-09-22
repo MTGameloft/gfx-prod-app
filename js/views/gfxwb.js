@@ -1179,6 +1179,53 @@ async function addLineDialog() {
   return true;
 }
 
+/**
+ * Edit one line of the breakdown.
+ *
+ * The three things the table gives you no way to change — the name, the
+ * division and the base ETA — together with the four it does, in one place.
+ *
+ * A line carries its OWN copy of the catalogue item's name, division and hours
+ * (see `newLine`), and the estimate reads the line, never the catalogue. So
+ * editing here changes this breakdown only and the catalogue entry is left
+ * alone — Catalogue → Edit is where that one is changed.
+ */
+async function editLineDialog(l) {
+  const res = await formDlg('Edit work item', [
+    { k: 'name', label: 'Work item', value: l.name || '', required: true, span: 12,
+      hint: 'This line only — the catalogue keeps its own name and hours.' },
+    { k: 'division', label: 'Division', type: 'select', span: 4, value: l.division || '',
+      opts: wbDivisions().map(d => ({ v: d.id, t: d.label })) },
+    { k: 'baseHours', label: 'Base ETA (hours)', type: 'number', value: l.baseHours ?? 0,
+      span: 4, min: 0, step: '0.25',
+      hint: 'One artist, normal complexity, one of the thing.' },
+    { k: 'qty', label: 'Quantity', type: 'number', value: l.qty ?? 1, span: 4, min: 0, step: '1' },
+    { k: 'complexity', label: 'Complexity', type: 'select', span: 4, value: l.complexity,
+      opts: WB_COMPLEXITY.map(c => ({ v: c.id, t: `${c.label} ×${c.factor}` })) },
+    { k: 'approach', label: 'Approach', type: 'select', span: 4, value: l.approach,
+      opts: WB_APPROACHES.map(a => ({ v: a.id, t: `${a.label} ×${a.factor}` })) },
+    { k: 'seniority', label: 'Rung', type: 'select', span: 4,
+      value: l.seniority || defaultSeniority(l.division),
+      opts: SENIORITY.map(x => ({ v: x, t: x })) },
+    { k: 'note', label: 'Note', value: l.note || '', span: 12,
+      hint: 'Why this line is here, or what it assumes.' },
+  ], { ok: 'Save', wide: true });
+  if (!res) return false;
+
+  /* Assigned field by field rather than spread: `res` is only the form, and a
+     spread would drop `id`, `itemId` and anything else the line carries. */
+  l.name = String(res.name).trim();
+  l.division = res.division;
+  l.baseHours = Math.max(0, Number(res.baseHours) || 0);
+  l.qty = Math.max(0, Math.round(Number(res.qty) || 0));
+  l.complexity = res.complexity;
+  l.approach = res.approach;
+  l.seniority = res.seniority;
+  l.note = res.note;
+  dirty = true;
+  return true;
+}
+
 async function editItemDialog(id) {
   const it = id ? wbItem(id) : null;
   const res = await formDlg(it ? 'Edit work item' : 'New work item', [
@@ -1383,7 +1430,9 @@ export default {
       'line-menu': (el, ev) => {
         const id = el.closest('[data-l]').dataset.l;
         const l = draft.lines.find(x => x.id === id);
+        if (!l) return;
         menu(ev, [
+          { label: 'Edit…', icon: 'edit', run: () => editLineDialog(l).then(ok => ok && redraw()) },
           { label: 'Duplicate', icon: 'file', run: () => {
             draft.lines.splice(draft.lines.indexOf(l) + 1, 0, { ...l, id: S.uid('wbl') });
             dirty = true; redraw();
