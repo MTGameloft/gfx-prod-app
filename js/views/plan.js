@@ -48,7 +48,7 @@ import {
 import {
   simulate, newScenario, newRequest, requestCalc, reqCrew, crewSweep,
   recommendCrew, planWindow, coverBars, workDaysBetween,
-  nextWorkDay, scopeBars, WINDOWS, GRAINS,
+  nextWorkDay, scopeBars, skippedNote, WINDOWS, GRAINS,
 } from '../plan.js';
 import {
   ganttHTML, capacityStripHTML, wireGantt, zoomToggle, geometry, zoomOf,
@@ -775,6 +775,10 @@ export default {
           how long it may take — the app answers with the crew that would need ·
           click a capacity cell to see what is in it ·
           <b>drag the bar at the very bottom to make the chart taller</b>
+          ${raw(skippedNote(sim.supply)
+            ? `<div class="gx-skipped">${icon('warn')}${esc(skippedNote(sim.supply))}
+                 <b data-act="go-roster" style="cursor:pointer;text-decoration:underline">Open Team</b></div>`
+            : '')}
         </div>
       </section>
 
@@ -1083,6 +1087,7 @@ function wireCommon(host, ctx) {
   acts(host, {
     range: el => { ui.range = el.dataset.v; saveUi(); re(); },
     grain: el => { ui.grain = el.dataset.v; saveUi(); re(); },
+    'go-roster': () => ctx.go('people'),
     'gx-zoom': el => { ui.zoom = el.dataset.z; saveUi(); re(); },
     tab: el => { ui.tab = el.dataset.v; saveUi(); re(); },
     today: () => {

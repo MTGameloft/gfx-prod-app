@@ -671,7 +671,17 @@ export function estimateToTasks(est, { status = 'backlog', projectId = '' } = {}
       const id = S.uid('tsk');
       s.tasks.push({
         id, created: Date.now(),
-        title: `${est.name || 'Estimate'} — ${l.name}${l.qty > 1 ? ` ×${l.qty}` : ''}`,
+        /*
+         * The work item, and only the work item.
+         *
+         * It used to be "<deliverable> — <work item>", which put the same
+         * long prefix on every task the breakdown made: twelve rows of the
+         * board reading "LS LATAM Physical Book - 3x Story Creation — ..."
+         * with the part that differs pushed off the end of the column. The
+         * deliverable is not lost — it is the project on the task, the first
+         * line of the description, and the `WB` tag says where it came from.
+         */
+        title: `${l.name}${l.qty > 1 ? ` ×${l.qty}` : ''}`,
         project: projectId || est.projectId || '',
         /* PROD is a real division now, so it keeps it like any other. */
         division: l.division,

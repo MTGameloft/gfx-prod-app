@@ -1267,6 +1267,32 @@ table.tbl tfoot td {
 
 /* ---- header ------------------------------------------------------------- */
 
+/*
+ * THE LABEL COLUMN IS EXACTLY --gx-label WIDE. ALL THREE OF THEM.
+ *
+ * The header band, the rows and the capacity strip are three separate flex
+ * rows that each begin with a label cell, and the whole chart only reads
+ * correctly while those three cells are the same width: the bands are drawn
+ * at absolute pixels inside the time column, so if one lane's label cell is
+ * wider than another's, that lane's dates are shifted bodily sideways.
+ *
+ * `flex: 0 0 var(--gx-label)` alone does NOT guarantee it. A flex item's
+ * automatic minimum size is its min-content width, and the row labels carry
+ * a `white-space: nowrap` meta ("775h · 2× · 49d · $12k") which cannot shrink
+ * — so the rows' column floored itself at min-content and grew past the
+ * basis, while the header's cell, holding just the word "Work", stayed at
+ * 268. Every bar, the today line and the capacity cells then drew that much
+ * to the right of the month they belong to: at week zoom the observed 120px
+ * put the work two and a half weeks into the future, and a longer scope name
+ * made it worse. The chart looked like a scheduling bug and was a layout one.
+ *
+ * So the width is pinned from all three sides and the overflow is clipped.
+ * The name inside already ellipsises; it just needs a box that stops.
+ */
+.gx-col-lbl, .gx-head-lbl, .gx-cap-lbl {
+  width: var(--gx-label); min-width: 0; max-width: var(--gx-label);
+  overflow: hidden;
+}
 .gx-head {
   display: flex; position: sticky; top: 0; z-index: 14;
   background: var(--bg-elev); border-bottom: 1px solid var(--line);
@@ -1484,6 +1510,14 @@ table.tbl tfoot td {
 
 .gx-empty { padding: 42px 20px; text-align: center; color: var(--text-mute); font-size: 12.5px; }
 .gx-hintbar { padding: 8px 14px; border-top: 1px solid var(--line-soft); }
+/* People the capacity maths could not place. It belongs under the chart it
+   qualifies, and it has to read as a caveat about the numbers above rather
+   than as another hint, so it gets the warning colour and its own line. */
+.gx-skipped {
+  display: flex; align-items: center; gap: 6px; margin-top: 6px;
+  color: var(--warn); font-weight: 600;
+}
+.gx-skipped .ico { width: 14px; height: 14px; flex: none; }
 .gx-key { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-mute); margin-left: 10px; }
 .gx-key i { width: 11px; height: 8px; border-radius: 2px; display: inline-block; }
 .gx-key i.k-plan { background: var(--info); }

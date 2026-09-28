@@ -107,6 +107,32 @@ export function leaveUsed(personId, year = new Date().getFullYear()) {
 /* ---------- capacity ----------------------------------------------------- */
 
 /**
+ * How much of a full week a person works, as a percentage. The ONE reader.
+ *
+ * The standard is a whole person: `settings.hoursPerDay` a day (8) on
+ * `prefs.workingDays` (Mon–Fri). `capacity` is the exception to that — 50 for
+ * somebody half time — and it is only ever an exception, so anything that is
+ * not a usable number means the standard rather than nothing.
+ *
+ * WHY ZERO COUNTS AS BLANK, which is the part worth arguing about. A blank
+ * `CapacityPct` cell used to import as the number 0, and a roster imported
+ * from a workbook that had never had that column filled in came back with
+ * every person at 0% — which is not "these people work no days", it is "this
+ * was never stated". The symptom was total: available days zero for the whole
+ * team, so every loaded week on the capacity strip read ∞ instead of a
+ * percentage, no overload could ever be shown (there is no such thing as over
+ * 100% of nothing), and the scope calculator had no supply to answer with.
+ *
+ * Nothing is lost by reading 0 as the standard, because 0% of a person is not
+ * a thing the roster needs to say: somebody who is not on the team is
+ * `active: false`, and that test is applied before this one everywhere.
+ */
+export function capacityPct(p) {
+  const n = Number(p?.capacity);
+  return Number.isFinite(n) && n > 0 ? n : 100;
+}
+
+/**
  * Available person-days per month, optionally filtered to a project or
  * division. Leave and public holidays are already removed.
  */
@@ -125,7 +151,7 @@ export function capacity(ym, { projectId = null, division = null, include = null
       ? ((p.alloc || []).find(a => a.projectId === projectId)?.pct || 0) / 100
       : 1;
     if (projectId && share === 0) continue;
-    const cap = (p.capacity ?? 100) / 100;
+    const cap = capacityPct(p) / 100;
     const away = leaveDaysInMonth(p.id, ym, hol);
     const g = wd * cap * share;
     const n = Math.max(0, (wd - away) * cap * share);

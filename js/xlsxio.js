@@ -210,7 +210,19 @@ function fromCell(col, raw, idx) {
 
   switch (col.t) {
     case 'num': {
-      if (blank) return { ok: true, value: 0 };
+      /*
+       * A blank number is zero — EXCEPT where the column says otherwise.
+       *
+       * Zero is right for a quantity: no budget spent is 0, no base hours is
+       * 0. It is wrong for a field whose blank means "the standard applies",
+       * and CapacityPct is exactly that. A roster imported from a workbook
+       * whose CapacityPct column had never been filled in came back with
+       * every person at 0% — and zero available days for the whole team is a
+       * silent, total failure of the capacity strip, the overload warning and
+       * the scope calculator. `blank` on the column is where that default
+       * lives, next to the field it belongs to.
+       */
+      if (blank) return { ok: true, value: col.blank ?? 0 };
       const n = Number(String(raw).replace(/[\s,]/g, '').replace(/[^\d.eE+-]/g, ''));
       return isNaN(n) ? { ok: false, why: `${col.h}: "${raw}" is not a number` }
                       : { ok: true, value: n };
@@ -430,7 +442,7 @@ function columnDoc(name, state) {
     else if (col.t === 'date')    { type = 'date';   notes = 'YYYY-MM-DD. A real Excel date works too.'; }
     else if (col.t === 'bool')    { type = 'yes/no'; notes = 'TRUE or FALSE.'; }
     else if (col.t === 'list')    { type = 'list';   notes = 'Several values in one cell, separated by commas.'; }
-    else if (col.t === 'num')     { type = 'number'; notes = 'Blank counts as 0.'; }
+    else if (col.t === 'num')     { type = 'number'; notes = col.blank == null ? 'Blank counts as 0.' : `Blank counts as ${col.blank}.`; }
     else if (col.t.startsWith('ref:')) {
       const kind = col.t.slice(4);
       const spec2 = REFS[kind];

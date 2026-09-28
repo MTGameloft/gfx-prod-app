@@ -47,7 +47,7 @@
 
 import * as S from './store.js';
 import {
-  holidaySet, leaveDaysMap, leaveType, rateFor,
+  holidaySet, leaveDaysMap, leaveType, rateFor, capacityPct,
 } from './calc.js';
 import {
   wbDivisions, wbDivision, wbSettings, wbEstimates, estimate as wbEstimateCalc,
@@ -201,14 +201,22 @@ export function supply(periods, cal, { extraHeads = [], includePeople = null } =
   const allocDiv = new Map(divs.map(d => [d.id, periods.map(() => 0)]));
   const heads = new Map(divs.map(d => [d.id, 0]));
   const rows = [];
+  /* Everyone the roster holds who ends up in no division's supply, and why.
+     They used to be dropped without a word, which is the worst way to be
+     wrong: a team short of the people it thinks it has, reported as a team
+     that fits. The views print the count — see `skippedNote()`. */
+  const skipped = [];
 
   for (const p of s.people || []) {
     if (p.active === false) continue;
     if (includePeople && !includePeople.has(p.id)) continue;
     const lane = byDiv.get(p.division);
-    if (!lane) continue;                       // a division that no longer exists
+    if (!lane) {
+      skipped.push({ person: p, why: p.division ? 'unknown' : 'none' });
+      continue;
+    }
     heads.set(p.division, heads.get(p.division) + 1);
-    const cap = (p.capacity ?? 100) / 100;
+    const cap = capacityPct(p) / 100;
     const away = leaveDaysMap(p.id);           // iso -> the leave record
     const own = periods.map(() => 0);
 
@@ -264,9 +272,28 @@ export function supply(periods, cal, { extraHeads = [], includePeople = null } =
     periods, divisions: divs, rows,
     byDivision: byDiv,
     allocByDivision: allocDiv,
-    heads,
+    heads, skipped,
     total: periods.map((_, i) => sum(divs, d => byDiv.get(d.id)[i])),
   };
+}
+
+/**
+ * One line naming the people a supply left out, or '' when it left nobody out.
+ *
+ * Kept here rather than in a view because all three charts want the same
+ * sentence, and because the thing being explained — who is and is not in the
+ * denominator — belongs with the function that decided it.
+ */
+export function skippedNote(sup) {
+  const list = sup?.skipped || [];
+  if (!list.length) return '';
+  const none = list.filter(x => x.why === 'none').length;
+  const unknown = list.length - none;
+  const bits = [];
+  if (none) bits.push(`${none} with no division`);
+  if (unknown) bits.push(`${unknown} in a division that no longer exists`);
+  return `${list.length} active ${list.length === 1 ? 'person is' : 'people are'} not counted in any `
+       + `division's capacity — ${bits.join(', ')}.`;
 }
 
 /**

@@ -257,8 +257,8 @@ export const SHEETS = {
       c('Location', 'location'),
       c('StartDate', 'startDate', 'date'),
       c('Manager', 'manager', 'ref:people', { dv: 'Person' }),
-      c('CapacityPct', 'capacity', 'num'),
-      c('LeaveAllowance', 'leaveAllowance', 'num'),
+      c('CapacityPct', 'capacity', 'num', { blank: 100 }),
+      c('LeaveAllowance', 'leaveAllowance', 'num', { blank: 15 }),
       c('Notes', 'notes', 'rich'),
 
       /* Calculated. The point of these is that the roster answers "is this

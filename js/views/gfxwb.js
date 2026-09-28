@@ -24,7 +24,7 @@ import { SENIORITY, thisMonth } from '../calc.js';
    people did it" with two different numbers is worse than having one. */
 import {
   scopeBars, crewSweep, recommendCrew, workCalendar, periodGrid, supply,
-  loadGrid, nextWorkDay,
+  loadGrid, nextWorkDay, skippedNote,
 } from '../plan.js';
 import { ganttHTML, capacityStripHTML, wireGantt, geometry, zoomOf } from '../gantt.js';
 import { bulkQueueDialog } from '../jiraui.js';
@@ -391,6 +391,10 @@ function schedulePanel(draft, r) {
       footer: capacityStripHTML(load, geo, { onlyDivisions: only, sym: sym() }),
       emptyMsg: 'Set a start date to place this breakdown on a calendar.',
     }))}
+    ${raw(skippedNote(sup)
+      ? `<div class="gx-hintbar tiny mute"><div class="gx-skipped">${icon('warn')}${esc(skippedNote(sup))}
+           <b data-act="go-team" style="cursor:pointer;text-decoration:underline">Open Team</b></div></div>`
+      : '')}
     <div class="body">
       <h4 style="margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-mute)">
         What different crew sizes buy you</h4>

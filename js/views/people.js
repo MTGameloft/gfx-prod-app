@@ -12,7 +12,7 @@ import {
   sum, groupBy, clamp, initials, hashColor,
 } from '../ui.js';
 import { personPage, personActions, TABS, logOneToOne } from '../personpage.js';
-import { capacity, leaveUsed, leaveDaysInMonth, thisMonth, rateFor, taskStats,
+import { capacity, capacityPct, leaveUsed, leaveDaysInMonth, thisMonth, rateFor, taskStats,
          SENIORITY, CONTRACT } from '../calc.js';
 import { divisionLabel } from '../jira.js';
 
@@ -226,8 +226,8 @@ async function editPerson(id) {
       opts: s.divisions.map(d => ({ v: d.id, t: `${d.id} — ${d.name}` })) },
     { k: 'seniority', label: 'Seniority', type: 'select', value: p?.seniority || '', span: 4, opts: SENIORITY.map(x => ({ v: x, t: x })) },
     { k: 'contract', label: 'Contract', type: 'select', value: p?.contract || 'staff', span: 4, opts: CONTRACT.map(x => ({ v: x, t: x })) },
-    { k: 'capacity', label: 'Capacity %', type: 'number', value: p?.capacity ?? 100, span: 4, min: 0, max: 100,
-      hint: 'Part-time or split with another department' },
+    { k: 'capacity', label: 'Capacity %', type: 'number', value: capacityPct(p), span: 4, min: 1, max: 100,
+      hint: 'Part-time or split with another department. A full week is 100.' },
     { k: 'costMonthly', label: 'Cost / month', type: 'number', value: p?.costMonthly ?? '', span: 4, min: 0,
       hint: 'Blank uses the rate card' },
     { k: 'leaveAllowance', label: 'Annual leave days', type: 'number', value: p?.leaveAllowance ?? 15, span: 4, min: 0 },
@@ -337,7 +337,7 @@ function exportCsv() {
   const rows = s.people.map(p => ({
     Name: p.name, Email: p.email || '', Division: p.division, Role: p.role,
     Seniority: p.seniority, Contract: p.contract, CostMonthly: p.costMonthly || '',
-    Capacity: p.capacity ?? 100, LeaveAllowance: p.leaveAllowance ?? 15,
+    Capacity: capacityPct(p), LeaveAllowance: p.leaveAllowance ?? 15,
     StartDate: p.startDate || '', Active: p.active === false ? 'no' : 'yes',
     Allocation: (p.alloc || []).map(a => `${S.byId(s.projects, a.projectId)?.code || a.projectId}:${a.pct}`).join(' '),
     Skills: Object.entries(p.skills || {}).map(([k, v]) => `${k}:${v}`).join(' '),

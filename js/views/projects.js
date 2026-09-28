@@ -28,7 +28,7 @@ import { divisionLabel } from '../jira.js';
 import { scopesFor, loggedEstimates, wbComplexity, wbApproach, wbDivision } from '../wb.js';
 import { scaleAct } from '../timescale.js';
 import {
-  simulate, planWindow, WINDOWS,
+  simulate, planWindow, skippedNote, WINDOWS,
 } from '../plan.js';
 import {
   ganttHTML, capacityStripHTML, wireGantt, zoomToggle, zoomOf, geometry, scrollToToday,
@@ -296,6 +296,10 @@ function ganttCard(o) {
       drag the bar at the very bottom to make the chart taller ·
       <b data-act="k-plan" style="cursor:pointer;text-decoration:underline">open the Plan</b>
       to test an extra request against this
+      ${raw(pref.capacity && skippedNote(sim.supply)
+        ? `<div class="gx-skipped">${icon('warn')}${esc(skippedNote(sim.supply))}
+             <b data-act="go-roster" style="cursor:pointer;text-decoration:underline">Open Team</b></div>`
+        : '')}
     </div>
   </section>`;
 }
@@ -308,6 +312,7 @@ const ganttActs = ctx => ({
   'gx-zoom':  el => { setGxPref(el.dataset.gk, { zoom: el.dataset.z }); ctx.rerender(); },
   'gx-cap':   el => { setGxPref(el.dataset.gk, { capacity: el.checked }); ctx.rerender(); },
   'k-plan':   () => ctx.go('plan'),
+  'go-roster': () => ctx.go('people'),
 });
 
 /**

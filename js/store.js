@@ -101,7 +101,40 @@ function migrate(s) {
   seedDivisionLabels(s);
   seedGfxProdProject(s);
   alignSeniority(s);
+  repairCapacity(s);
   return s;
+}
+
+/**
+ * Put the roster back on a full week after a blank import zeroed it.
+ *
+ * `CapacityPct` imported a blank cell as the number 0, so a roster brought in
+ * from a workbook that had never had that column filled in arrived with every
+ * person at 0% of a working week. Nothing said so: the Team page showed the
+ * people, the divisions counted their heads, and every derived number that
+ * needed a day of anybody's time quietly came out as zero — the capacity
+ * strip could only print ∞, no overload could exist, and the scope calculator
+ * had no supply to weigh a scope against.
+ *
+ * The import no longer does that (`blank: 100` on the column) and every
+ * reader now goes through `capacityPct()`, which treats a missing or
+ * non-positive value as a full week. This pass is for the records already
+ * written: it makes the stored number say what the app computes, so the
+ * roster, the editor, the workbook and the maths cannot disagree.
+ *
+ * FLAG-GUARDED, NOT VALUE-GUARDED, for the same reason the board order is: a
+ * value test would run again on every load, and somebody who genuinely wants
+ * a person at 0 would have it corrected out from under them for ever. Once.
+ */
+function repairCapacity(s) {
+  s.meta ||= {};
+  if (s.meta.capacityRepaired) return;
+  s.meta.capacityRepaired = true;
+  for (const p of s.people || []) {
+    if (p.active === false) continue;
+    const n = Number(p.capacity);
+    if (!Number.isFinite(n) || n <= 0) p.capacity = 100;
+  }
 }
 
 /**
