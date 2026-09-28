@@ -69,6 +69,13 @@ export const ZOOMS = [
 export const zoomOf = id => ZOOMS.find(z => z.id === id) || ZOOMS[1];
 
 const LABEL_W = 268;      // the frozen column; wide enough for a scope name
+/* What a drag may set it to. The floor keeps the chevron, the dot and a
+   readable stub of the name; the ceiling stops the calendar being squeezed
+   out of the panel by a column nobody can then narrow, because the handle
+   would be off-screen. */
+export const LABEL_MIN = 150;
+export const LABEL_MAX = 720;
+export const LABEL_DEFAULT = LABEL_W;
 const ROW_H   = 30;
 const BAR_H   = 16;
 
@@ -289,7 +296,9 @@ function barCell(bar, geo, sym) {
  */
 export function ganttHTML({ bars, from, to, zoom = 'week', collapsed = new Set(),
                             periods = [], footer = '', emptyMsg = 'Nothing scheduled in this window.',
-                            sym = '$', maxRows = 400, height = 0, addLabel = '' } = {}) {
+                            sym = '$', maxRows = 400, height = 0, addLabel = '',
+                            labelW = 0 } = {}) {
+  const lblW = Math.round(Math.min(LABEL_MAX, Math.max(LABEL_MIN, labelW || LABEL_W)));
   const z = zoomOf(zoom);
   const geo = geometry(from, to, z.dayPx);
   const cal = workCalendar(from, to);
@@ -347,9 +356,10 @@ export function ganttHTML({ bars, from, to, zoom = 'week', collapsed = new Set()
 
   return `
   <div class="gx${height > 0 ? ' h-set' : ''}" data-gx
-       style="--gx-label:${LABEL_W}px;--gx-row:${ROW_H}px;--gx-bar:${BAR_H}px${hVar}">
+       style="--gx-label:${lblW}px;--gx-row:${ROW_H}px;--gx-bar:${BAR_H}px${hVar}">
     <div class="gx-scroll" data-gx-scroll>
-      <div class="gx-canvas" style="width:${LABEL_W + geo.width}px">
+      <div class="gx-canvas" data-gx-canvas data-timew="${Math.round(geo.width)}"
+           style="width:${lblW + geo.width}px">
 
         <div class="gx-head">
           <div class="gx-head-lbl">Work</div>
@@ -357,7 +367,19 @@ export function ganttHTML({ bars, from, to, zoom = 'week', collapsed = new Set()
         </div>
 
         <div class="gx-body">
-          <div class="gx-col-lbl">${labels}${addRow}<div class="gx-fill"></div></div>
+          <div class="gx-col-lbl">${labels}${addRow}<div class="gx-fill"></div>
+            <!--
+              The column is a fixed width so that the three lanes of the chart
+              line up (see the CSS), which means a long scope name is clipped.
+              This is how you get it back: drag the divider. It lives in the
+              label column itself rather than in the header, so the whole
+              height of the chart is the target and it is wherever you happen
+              to be looking. Double-click puts it back to the default.
+            -->
+            <div class="gx-grip-v" data-gx-vgrip role="separator" aria-orientation="vertical"
+                 tabindex="0" aria-label="Resize the Work column"
+                 title="Drag to widen the Work column · double-click to reset"></div>
+          </div>
           <div class="gx-col-time" style="width:${geo.width}px" data-gx-time data-daypx="${geo.dayPx}"
                data-from="${esc(from)}" data-to="${esc(to)}">
             <div class="gx-backdrop">${backdrop(geo, cal, periods)}</div>
@@ -390,10 +412,26 @@ export function ganttHTML({ bars, from, to, zoom = 'week', collapsed = new Set()
  * two scrollbars that have to be kept in sync by hand is the state this was
  * built to get out of.
  *
- * COLOUR. Five steps, and the top one is reserved for genuinely over 100%.
- * Spreading the scale evenly made 95% and 105% nearly the same shade, which
- * hides the only boundary that matters. Everything under 100 shares the lower
- * four.
+ * WHAT THE NUMBER IS: CAPACITY LEFT, NOT LOAD.
+ *
+ * The cell prints how much of the division's capacity this period still has
+ * free — 100% is a week nothing is booked into, 0% is a week that is exactly
+ * full, and a negative number is a week with more work in it than people.
+ * One person on 40h a week with 40h of scope reads 0%; two people on 80h with
+ * the same 40h of scope read 50%.
+ *
+ * It used to print the load, which is the same fact upside down, and reading
+ * it meant subtracting from 100 in your head every time — while the question
+ * the chart is there to answer is "what else can this take".
+ *
+ * The MODEL is still load (`c.loadPct`), and so is every threshold below: an
+ * overload is over 100% of the people, and rewriting the comparisons to run
+ * the other way would only be a chance to get one of them backwards.
+ *
+ * COLOUR. Five steps, and the top one is reserved for genuinely over 100%
+ * load — that is, negative capacity left. Spreading the scale evenly made 95%
+ * and 105% nearly the same shade, which hides the only boundary that matters.
+ * Everything under 100 shares the lower four.
  */
 export function capacityStripHTML(load, geo, { onlyDivisions = null, sym = '$' } = {}) {
   const rows = load.rows.filter(r => !onlyDivisions || onlyDivisions.has(r.division.id));
@@ -405,18 +443,24 @@ export function capacityStripHTML(load, geo, { onlyDivisions = null, sym = '$' }
       : pct > 100 ? 5 : pct > 85 ? 4 : pct > 60 ? 3 : pct > 25 ? 2 : pct > 0 ? 1 : 0;
     const left = geo.x(c.period.from);
     const w = Math.max(2, geo.xEnd(c.period.to) - left);
+    /* A dash, not 0%, where there is nobody: "no capacity left" and "no
+       capacity at all" call for different actions, and one of them cannot be
+       fixed by moving the scope. */
     const txt = w > 30
-      ? (Number.isFinite(pct) ? Math.round(pct) + '%' : '∞')
+      ? (c.freePct == null ? (c.needed > 0 ? '—' : '') : Math.round(c.freePct) + '%')
       : '';
     /* The tooltip says WHERE the number came from, not just what it is. A
-       cell at 120% because five people are allocated elsewhere is a different
-       conversation from one at 120% because of a scope you can move, and a
-       bare percentage cannot tell you which you are looking at. */
+       cell with nothing left because five people are allocated elsewhere is a
+       different conversation from one with nothing left because of a scope
+       you can move, and a bare percentage cannot tell you which. */
     const src = c.source === 'allocation'
       ? `committed ${fmtNum(c.committed, 1)}d — from allocation (${fmtNum(c.scheduled, 1)}d of it itemised)`
       : `committed ${fmtNum(c.committed, 1)}d — all itemised work`;
     const tip = `${div.label} · ${c.period.label} (${fmtDate(c.period.from)} → ${fmtDate(c.period.to)})\n`
-      + `${fmtNum(c.needed, 1)} person-days needed of ${fmtNum(c.available, 1)} available\n`
+      + (c.freePct == null
+          ? `no capacity here at all — ${fmtNum(c.needed, 1)} person-days needed\n`
+          : `${Math.round(c.freePct)}% of capacity left · `
+            + `${fmtNum(c.needed, 1)} person-days needed of ${fmtNum(c.available, 1)} available\n`)
       + src
       + (c.extra > 0.05 ? `\n+ ${fmtNum(c.extra, 1)}d from this scenario` : '')
       + (c.gap > 0.05 ? `\nSHORT ${fmtNum(c.gap, 1)} days` : c.gap < -0.05 ? `\n${fmtNum(-c.gap, 1)} days spare` : '')
@@ -428,10 +472,11 @@ export function capacityStripHTML(load, geo, { onlyDivisions = null, sym = '$' }
   return `<div class="gx-cap-strip">
     ${rows.map(r => `
       <div class="gx-cap-row">
-        <div class="gx-cap-lbl" title="${esc(r.division.label)} — ${r.heads} ${r.heads === 1 ? 'person' : 'people'}">
+        <div class="gx-cap-lbl" title="${esc(r.division.label)} — ${fmtNum(r.heads, 1)} ${r.heads === 1 ? 'person' : 'people'}${
+            r.perProject ? ' allocated to this project' : ''}">
           <span class="gx-dot" style="background:${esc(r.division.color || 'var(--muted)')}"></span>
           <span class="gx-name">${esc(r.division.id)}</span>
-          <span class="gx-meta">${r.heads}p${r.shortfallDays > 0.5 ? ` · <b class="bad">−${fmtNum(r.shortfallDays, 0)}d</b>` : ''}</span>
+          <span class="gx-meta">${fmtNum(r.heads, 1)}p${r.shortfallDays > 0.5 ? ` · <b class="bad">−${fmtNum(r.shortfallDays, 0)}d</b>` : ''}</span>
         </div>
         <div class="gx-cap-track">${r.cells.map((c, i) => cell(c, r.division, i)).join('')}</div>
       </div>`).join('')}
@@ -582,6 +627,76 @@ export function wireGantt(host, handlers = {}) {
     window.addEventListener('pointerup', hUp);
   }
 
+  /* ---- drag the divider to widen the Work column ------------------------ */
+
+  /*
+   * The same shape as the height grip, and for the same reason: the column
+   * has to be ONE fixed width for the chart's three lanes to line up, so a
+   * long scope name is clipped, so there has to be a way to say how wide.
+   *
+   * The canvas width is kept in step during the drag as well as the variable.
+   * It is `label + timeline` and is written inline at render, so moving only
+   * the variable would let the label column push the bars out of a canvas
+   * that had not grown to hold them — the columns would separate under the
+   * pointer and snap back on the next render, which reads as a broken drag.
+   */
+  const vgrip = gx.querySelector('[data-gx-vgrip]');
+  const canvas = gx.querySelector('[data-gx-canvas]');
+  let vDrag = null;
+
+  const curLabelW = () =>
+    parseInt(gx.style.getPropertyValue('--gx-label'), 10) || LABEL_DEFAULT;
+
+  const setLabelW = w => {
+    const px = Math.round(Math.min(LABEL_MAX, Math.max(LABEL_MIN, w)));
+    gx.style.setProperty('--gx-label', px + 'px');
+    if (canvas) canvas.style.width = (px + (Number(canvas.dataset.timew) || 0)) + 'px';
+    return px;
+  };
+
+  const vDown = e => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    vDrag = { x0: e.clientX, w0: curLabelW() };
+    vgrip.classList.add('on');
+    document.body.style.cursor = 'ew-resize';
+    document.body.style.userSelect = 'none';
+  };
+  const vMove = e => {
+    if (!vDrag) return;
+    setLabelW(vDrag.w0 + (e.clientX - vDrag.x0));
+  };
+  const vUp = () => {
+    if (!vDrag) return;
+    vDrag = null;
+    vgrip.classList.remove('on');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    handlers.onLabelWidth?.(curLabelW());
+  };
+  const vReset = e => {
+    e?.stopPropagation();
+    setLabelW(LABEL_DEFAULT);
+    handlers.onLabelWidth?.(0);          // 0 means "the default", as with height
+  };
+  const vKey = e => {
+    const step = e.shiftKey ? 60 : 15;
+    if (e.key === 'ArrowRight') handlers.onLabelWidth?.(setLabelW(curLabelW() + step));
+    else if (e.key === 'ArrowLeft') handlers.onLabelWidth?.(setLabelW(curLabelW() - step));
+    else if (e.key === 'Home') vReset(e);
+    else return;
+    e.preventDefault();
+  };
+
+  if (vgrip) {
+    vgrip.addEventListener('pointerdown', vDown);
+    vgrip.addEventListener('dblclick', vReset);
+    vgrip.addEventListener('keydown', vKey);
+    window.addEventListener('pointermove', vMove);
+    window.addEventListener('pointerup', vUp);
+  }
+
   /* ---- drag to move, drag the right grip to re-crew --------------------- */
 
   const down = e => {
@@ -679,6 +794,13 @@ export function wireGantt(host, handlers = {}) {
       grip.removeEventListener('keydown', hKey);
       window.removeEventListener('pointermove', hMove);
       window.removeEventListener('pointerup', hUp);
+    }
+    if (vgrip) {
+      vgrip.removeEventListener('pointerdown', vDown);
+      vgrip.removeEventListener('dblclick', vReset);
+      vgrip.removeEventListener('keydown', vKey);
+      window.removeEventListener('pointermove', vMove);
+      window.removeEventListener('pointerup', vUp);
     }
   };
 }

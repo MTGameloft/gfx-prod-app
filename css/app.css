@@ -1338,6 +1338,22 @@ table.tbl tfoot td {
 .gx-col-time { position: relative; flex: none; display: flex; flex-direction: column; }
 
 /*
+ * The divider you drag to widen the Work column.
+ *
+ * Full height of the column rather than a notch in the header, so the target
+ * is wherever you are already looking. Invisible until you are near it: it
+ * sits on the border that is already drawn there, and a permanent second line
+ * beside that one would just look like a rendering fault.
+ */
+.gx-grip-v {
+  position: absolute; top: 0; bottom: 0; right: 0; width: 7px; z-index: 11;
+  cursor: ew-resize; background: transparent;
+  transition: background var(--t-fast);
+}
+.gx-grip-v:hover, .gx-grip-v.on { background: var(--accent); opacity: .55; }
+.gx-grip-v:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/*
  * The empty calendar below the work.
  *
  * Ruled by a repeating gradient rather than by real elements: it costs no

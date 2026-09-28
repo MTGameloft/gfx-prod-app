@@ -189,8 +189,28 @@ function periodIndexOf(periods, cal) {
  *        scenario-only additions. `fte` may be fractional — half a contractor
  *        is a real thing to model, and a hire that starts mid-window only
  *        contributes from `from`.
+ * @param {Set|null} [o.forProjects]
+ *        Narrow the supply to the capacity ALLOCATED to these projects.
+ *
+ *        Everything above describes the division's whole pair of hands, which
+ *        is the right denominator on a portfolio-wide chart: the question
+ *        there is "can the 3D team take this", and the team is the team.
+ *
+ *        On ONE project's chart it is the wrong denominator, and wrong in the
+ *        flattering direction. A project that has two of the ten 2D artists
+ *        was being weighed against all ten, so its scope looked like a fifth
+ *        of the load it actually is on the people doing it. With this set,
+ *        each person contributes their days times the share of themselves
+ *        they are allocated to these projects — two people at 50% are one
+ *        person's capacity — and anybody with no allocation to them is not in
+ *        the denominator at all.
+ *
+ *        Pass this and leave `useAllocation` off in `loadGrid`, or allocation
+ *        is applied twice: once shrinking the supply and again as the floor
+ *        under demand, which reads as fully committed whatever the scope is.
  */
-export function supply(periods, cal, { extraHeads = [], includePeople = null } = {}) {
+export function supply(periods, cal, { extraHeads = [], includePeople = null,
+                                       forProjects = null } = {}) {
   const s = S.get();
   const pIdx = periodIndexOf(periods, cal);
   const divs = wbDivisions();
@@ -215,8 +235,19 @@ export function supply(periods, cal, { extraHeads = [], includePeople = null } =
       skipped.push({ person: p, why: p.division ? 'unknown' : 'none' });
       continue;
     }
-    heads.set(p.division, heads.get(p.division) + 1);
-    const cap = capacityPct(p) / 100;
+    /* The share of this person that belongs to the projects being asked
+       about. One for a portfolio-wide supply; their allocation percentage on
+       a single project's chart, and zero — so they are not in the denominator
+       at all — for somebody who is not on it. Capped at the whole person for
+       the same reason the allocation floor is: one over-100% record must not
+       manufacture capacity that does not exist. */
+    const share = forProjects
+      ? Math.min(1, sum((p.alloc || []).filter(a => forProjects.has(a.projectId)),
+                        a => (Number(a.pct) || 0) / 100))
+      : 1;
+    if (share <= 0) continue;
+    heads.set(p.division, heads.get(p.division) + share);
+    const cap = (capacityPct(p) / 100) * share;
     const away = leaveDaysMap(p.id);           // iso -> the leave record
     const own = periods.map(() => 0);
 
@@ -273,6 +304,10 @@ export function supply(periods, cal, { extraHeads = [], includePeople = null } =
     byDivision: byDiv,
     allocByDivision: allocDiv,
     heads, skipped,
+    /* Whether this supply is the whole division or only what is allocated to
+       some projects. The strip says so, because "2p" means a different thing
+       in each case and the reader cannot tell them apart from the number. */
+    perProject: !!forProjects,
     total: periods.map((_, i) => sum(divs, d => byDiv.get(d.id)[i])),
   };
 }
@@ -782,6 +817,25 @@ export function loadGrid(bars, periods, cal, sup, { useAllocation = true } = {})
         source: useAllocation && alloc[i] > sched[i] ? 'allocation' : 'scheduled',
         gap: n - a,
         loadPct: a > 0 ? (n / a) * 100 : (n > 0 ? Infinity : 0),
+        /*
+         * The same cell read the other way up: how much of the capacity is
+         * STILL FREE. `100 - loadPct`, and negative when the work is more
+         * than the people.
+         *
+         * Both are kept because they are for different readers. Every
+         * threshold in this file and every colour on the strip is expressed
+         * against load — over 100 is an overload, and inverting the model
+         * would mean rewriting all of that and getting one of the
+         * comparisons backwards. What a producer wants to READ off a chart
+         * is the other one: not "this week is at 80%" but "this week has 20%
+         * left", because the question being asked of the chart is what more
+         * it can take. So the model stays in load and the strip prints free.
+         *
+         * `null` where there is no capacity at all: 0% free and "there is
+         * nobody here" are not the same answer, and printing 0 for both
+         * hides the one that needs acting on.
+         */
+        freePct: a > 0 ? ((a - n) / a) * 100 : null,
         over: n - a > 0.05,
         contributors: contributors.get(`${d.id}|${i}`) || [],
       };
@@ -789,6 +843,7 @@ export function loadGrid(bars, periods, cal, sup, { useAllocation = true } = {})
     return {
       division: d, cells,
       heads: sup.heads.get(d.id) || 0,
+      perProject: !!sup.perProject,
       totalAvailable: sum(avail),
       totalNeeded: sum(cells, c => c.needed),
       totalScheduled: sum(sched),
@@ -822,7 +877,8 @@ export function loadGrid(bars, periods, cal, sup, { useAllocation = true } = {})
     pinchPoints: periods.map((p, i) => ({
       period: p,
       divisions: rows.filter(r => r.cells[i].over)
-        .map(r => ({ division: r.division, gap: r.cells[i].gap, loadPct: r.cells[i].loadPct })),
+        .map(r => ({ division: r.division, gap: r.cells[i].gap,
+                     loadPct: r.cells[i].loadPct, freePct: r.cells[i].freePct })),
     })).filter(x => x.divisions.length)
       .map(x => ({ ...x, gap: sum(x.divisions, d => d.gap) })),
   };
@@ -863,11 +919,20 @@ export const BASELINE = { id: 'baseline', name: 'As it stands', requests: [],
  */
 export function simulate(scenario, { from, to, grain = 'week', projects = null,
                                      divisions = null, showTasks = true,
-                                     useAllocation = true,
+                                     useAllocation = true, scopeSupply = false,
                                      state = S.get() } = {}) {
   const cal = workCalendar(from, to);
   const periods = periodGrid(from, to, grain, cal);
-  const sup = supply(periods, cal, { extraHeads: scenario?.extraHeads || [] });
+  /* `scopeSupply` weighs the work against the capacity ALLOCATED to the
+     projects on screen rather than against the whole division — the right
+     denominator when the chart is one project's, and the wrong one when it is
+     the portfolio's. Off by default so the Plan keeps answering "can the team
+     take this". See `supply()` for why it must not be combined with
+     `useAllocation`. */
+  const sup = supply(periods, cal, {
+    extraHeads: scenario?.extraHeads || [],
+    forProjects: scopeSupply && projects?.size ? projects : null,
+  });
   const bars = buildBars({ projects, divisions, showTasks, scenario, state });
   const load = loadGrid(bars, periods, cal, sup, { useAllocation });
 

@@ -234,7 +234,7 @@ function taskBand(live) {
 const gxPrefs = key => {
   const by = S.get()?.prefs?.ganttBy;
   const own = by && typeof by === 'object' ? by[key] : null;
-  return { range: '6m', zoom: 'week', capacity: true, height: 0, ...(own || {}) };
+  return { range: '6m', zoom: 'week', capacity: true, height: 0, labelW: 0, ...(own || {}) };
 };
 const setGxPref = (key, patch) => S.mutate(s => {
   s.prefs ||= {};
@@ -256,6 +256,12 @@ function ganttCard(o) {
   const sim = simulate(null, {
     ...win, grain: 'week', projects: o.projects || null,
     showTasks: true, useAllocation: false,
+    /* One project's chart is weighed against the capacity allocated to that
+       project, not against everybody in the division — two of the ten 2D
+       artists are what this project actually has. With `projects` null (the
+       portfolio) this does nothing and the whole division is the denominator,
+       which is what a portfolio chart should ask. */
+    scopeSupply: true,
   });
   const geo = geometry(sim.from, sim.to, zoomOf(pref.zoom).dayPx);
   /* Only the divisions this selection actually touches. A project with no 3D
@@ -279,7 +285,7 @@ function ganttCard(o) {
         <span>Capacity</span></label>
       ${raw(o.extra || '')}</header>
     ${raw(ganttHTML({
-      bars: sim.bars, from: sim.from, to: sim.to, zoom: pref.zoom, sym: symOf(), height: pref.height,
+      bars: sim.bars, from: sim.from, to: sim.to, zoom: pref.zoom, sym: symOf(), height: pref.height, labelW: pref.labelW,
       /* `folded` was tracked and never rendered, so collapsing here silently
          did nothing at all — the Plan passed its set through and this did
          not. Caught by testing both charts rather than only the one the
@@ -293,6 +299,7 @@ function ganttCard(o) {
     }))}
     <div class="gx-hintbar tiny mute">
       Click a row name to fold it · click a bar to open it · drag a scope or a task to move it ·
+      drag the divider beside the names to widen the Work column ·
       drag the bar at the very bottom to make the chart taller ·
       <b data-act="k-plan" style="cursor:pointer;text-decoration:underline">open the Plan</b>
       to test an extra request against this
@@ -333,6 +340,7 @@ function wireGanttCard(host, ctx) {
     /* Silent: the drag has already set the variable on the live element, and
        re-rendering mid-gesture would rebuild the chart and lose the scroll. */
     onHeight: px => setGxPref(key, { height: px }),
+    onLabelWidth: px => setGxPref(key, { labelW: px }),
     /* On a single project the chart already knows which one, so the task
        opens with it filled in; on the portfolio it is the ordinary dialog
        with a project to pick. */

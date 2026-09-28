@@ -69,7 +69,7 @@ let dirty = false;
 let wbFolded = new Set();
 
 const UI_KEY = 'gfxwb.ui';
-const ui = Object.assign({ catDivision: '', estStatus: '', height: 0 },
+const ui = Object.assign({ catDivision: '', estStatus: '', height: 0, labelW: 0 },
   JSON.parse(localStorage.getItem(UI_KEY) || '{}'));
 const saveUi = () => localStorage.setItem(UI_KEY, JSON.stringify(ui));
 
@@ -364,7 +364,13 @@ function schedulePanel(draft, r) {
      a week that is red here is the same week that is red there. */
   const cal = workCalendar(win.from, win.to);
   const periods = periodGrid(win.from, win.to, 'week', cal);
-  const sup = supply(periods, cal);
+  /* Weighed against the capacity allocated to this estimate's project, the
+     same as that project's own chart — a breakdown for Let's Story is not
+     entitled to the whole 2D team. With no project chosen there is nothing to
+     narrow by, so it falls back to the division. */
+  const sup = supply(periods, cal, {
+    forProjects: draft.projectId ? new Set([draft.projectId]) : null,
+  });
   const load = loadGrid(bars, periods, cal, sup, { useAllocation: false });
   const only = new Set(r.byDivision.map(d => d.division.id));
 
@@ -385,7 +391,7 @@ function schedulePanel(draft, r) {
       <button class="btn sm subtle" data-act="go-plan" title="See it against every other project">
         ${icon('cal')}Open in Plan</button></header>
     ${raw(ganttHTML({
-      bars, from: win.from, to: win.to, zoom: win.zoom, sym: sym(), height: ui.height,
+      bars, from: win.from, to: win.to, zoom: win.zoom, sym: sym(), height: ui.height, labelW: ui.labelW,
       collapsed: wbFolded,
       periods: periods.map(p => p.from),
       footer: capacityStripHTML(load, geo, { onlyDivisions: only, sym: sym() }),
@@ -1672,6 +1678,7 @@ export default {
       /* Same drag handle as the other two charts, remembered with this
          screen's other view preferences. */
       onHeight: px => { ui.height = px; saveUi(); },
+      onLabelWidth: px => { ui.labelW = px; saveUi(); },
     });
   },
 };

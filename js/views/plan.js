@@ -77,6 +77,9 @@ const ui = Object.assign({
      chart; kept here with the other view preferences so it survives a reload
      and every re-render in between. */
   height: 0,
+  /* Work-column width in px, 0 = the default. Dragged by the divider beside
+     the row labels, and kept here for the same reason the height is. */
+  labelW: 0,
   /*
    * OFF by default, and the reasoning matters.
    *
@@ -376,7 +379,7 @@ function pinchPanel(sim) {
     const dls = x.divisions.map(d =>
       `<span class="gx-gap" style="--chip:${esc(d.division.color || 'var(--muted)')}">
         ${esc(d.division.id)} <b>−${n1(d.gap)}d</b>
-        <i>${Number.isFinite(d.loadPct) ? Math.round(d.loadPct) + '%' : 'no crew'}</i></span>`).join('');
+        <i>${d.freePct == null ? 'no crew' : Math.round(d.freePct) + '% left'}</i></span>`).join('');
     /* What you could do about it, in the two currencies a producer has. */
     const heads = Math.ceil(x.gap / Math.max(1, x.period.workDays));
     const cost = x.gap * hpd * medianHourly();
@@ -765,7 +768,7 @@ export default {
         </header>
         ${raw(ganttHTML({
           bars: sim.bars, from: sim.from, to: sim.to, zoom: ui.zoom,
-          collapsed, periods: periodLines, footer, sym: sym(), height: ui.height,
+          collapsed, periods: periodLines, footer, sym: sym(), height: ui.height, labelW: ui.labelW,
           addLabel: 'Add work',
           emptyMsg: 'Nothing scheduled in this window. Log a work-breakdown estimate, '
                   + 'give a task an estimate and a due date, or add a request below.',
@@ -774,6 +777,7 @@ export default {
           Click a row name to fold it · drag a bar to move it · drag its right edge to change
           how long it may take — the app answers with the crew that would need ·
           click a capacity cell to see what is in it ·
+          drag the divider beside the names to widen the Work column ·
           <b>drag the bar at the very bottom to make the chart taller</b>
           ${raw(skippedNote(sim.supply)
             ? `<div class="gx-skipped">${icon('warn')}${esc(skippedNote(sim.supply))}
@@ -801,6 +805,7 @@ export default {
          variable on the live element, so re-rendering here would rebuild the
          whole chart mid-gesture and throw the scroll position away. */
       onHeight: px => { ui.height = px; saveUi(); },
+      onLabelWidth: px => { ui.labelW = px; saveUi(); },
       /*
        * Creating work from the chart.
        *
@@ -1048,7 +1053,7 @@ function cellDetail({ divisionId, index }, sim) {
           <div class="d">on top of the committed plan</div></div>
         <div class="card stat"><div class="k">${c.gap > 0 ? 'Short by' : 'Spare'}</div>
           <div class="v" style="color:${c.gap > 0.05 ? 'var(--risk)' : 'var(--ok)'}">${n1(Math.abs(c.gap))}<span style="font-size:14px;font-weight:400">d</span></div>
-          <div class="d">${Number.isFinite(c.loadPct) ? Math.round(c.loadPct) + '% loaded' : 'nobody on this division'}</div></div>
+          <div class="d">${c.freePct == null ? 'nobody on this division' : Math.round(c.freePct) + '% of capacity left'}</div></div>
       </div>
       ${c.source === 'allocation' ? `<div class="banner" style="margin-bottom:14px"><div>
         <b>This period is set by allocation, not by the board.</b>
