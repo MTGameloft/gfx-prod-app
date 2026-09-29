@@ -711,6 +711,55 @@ function refreshBackupBtn() {
 
 /* ---------- routing ------------------------------------------------------ */
 
+/*
+ * A RE-RENDER IS NOT A NAVIGATION, AND MUST NOT MOVE THE PAGE.
+ *
+ * Almost every interaction in this app ends in `ctx.rerender()`, which is
+ * `route()` again: the view's DOM is thrown away and rebuilt. That is a
+ * deliberately simple model and it stays — but it meant that ticking a box
+ * two thirds of the way down a chart, or dragging one bar, threw you back to
+ * the top of the page with the chart scrolled back to its left edge. The work
+ * you were looking at was gone and you had to find it again, every time.
+ *
+ * So the scroll position of the page AND of every pane inside it is carried
+ * across a re-render of the SAME route, and only reset when the route
+ * actually changes — which is when a fresh page genuinely should start at the
+ * top. Panes are matched by their order in the document, which is stable
+ * because the same view is rebuilding the same structure.
+ *
+ * This also settles a fight that was already there: the Plan and the
+ * portfolio call `scrollToToday()` on every render, which is right when a
+ * chart first opens and wrong on the two-hundredth re-render. The restore
+ * runs after `view.render()` and therefore after that call, so an opening
+ * position still happens on arrival and never again.
+ */
+const SCROLL_PANES = '[data-gx-scroll], .tbl-wrap';
+let lastRouteKey = null;
+
+const captureScroll = host => ({
+  top: host.scrollTop,
+  panes: [...host.querySelectorAll(SCROLL_PANES)].map(el => [el.scrollLeft, el.scrollTop]),
+});
+
+function restoreScroll(host, keep) {
+  const put = () => {
+    host.scrollTop = keep.top;
+    const panes = host.querySelectorAll(SCROLL_PANES);
+    keep.panes.forEach(([l, t], i) => {
+      const el = panes[i];
+      if (!el) return;
+      el.scrollLeft = l;
+      el.scrollTop = t;
+    });
+  };
+  put();
+  /* Again next frame: a chart's scrollable width comes from an inline width
+     that is correct immediately, but a table's does not settle until layout
+     has run, and a pane cannot scroll further than it is wide — so the first
+     assignment can be silently clamped to zero. */
+  requestAnimationFrame(put);
+}
+
 function route() {
   const [, id, ...rest] = (location.hash || '#/dashboard').split('/');
   const view = byId(id || S.get().prefs.landing);
@@ -722,6 +771,12 @@ function route() {
   document.title = `${view.title} · GFX Prod App`;
 
   const host = $('#view');
+  /* Same address = a re-render of what is already on screen; keep the view.
+     A different one is a navigation and starts at the top. */
+  const routeKey = location.hash || '#/dashboard';
+  const keep = routeKey === lastRouteKey ? captureScroll(host) : null;
+  lastRouteKey = routeKey;
+
   host.innerHTML = '<div class="view-pad"></div>';
   const pad = host.firstElementChild;
 
@@ -766,7 +821,7 @@ function route() {
   }
   renderNav();
   refreshBackupBtn();
-  host.scrollTop = 0;
+  if (keep) restoreScroll(host, keep); else host.scrollTop = 0;
 }
 
 export function go(id, ...rest) {
