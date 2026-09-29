@@ -230,7 +230,7 @@ function fromCell(col, raw, idx) {
        * the scope calculator. `blank` on the column is where that default
        * lives, next to the field it belongs to.
        */
-      if (blank) return { ok: true, value: col.blank ?? 0 };
+      if (blank) return { ok: true, value: 'blank' in col ? col.blank : 0 };
       const n = Number(String(raw).replace(/[\s,]/g, '').replace(/[^\d.eE+-]/g, ''));
       return isNaN(n) ? { ok: false, why: `${col.h}: "${raw}" is not a number` }
                       : { ok: true, value: n };
@@ -476,7 +476,8 @@ function columnDoc(name, state) {
             + `each must be ${spec2.wants} from the ${spec2.sheet} sheet. `
             + 'A name that matches nobody is dropped and reported.';
     }
-    else if (col.t === 'num')     { type = 'number'; notes = col.blank == null ? 'Blank counts as 0.' : `Blank counts as ${col.blank}.`; }
+    else if (col.t === 'num')     { type = 'number'; notes = !('blank' in col) ? 'Blank counts as 0.'
+        : col.blank == null ? 'Blank means not set.' : `Blank counts as ${col.blank}.`; }
     else if (col.t.startsWith('ref:')) {
       const kind = col.t.slice(4);
       const spec2 = REFS[kind];

@@ -684,6 +684,9 @@ export const SHEETS = {
          delete it: a child sheet rebuilds each row from the columns it has,
          so a field the sheet does not mention is not preserved, it is gone. */
       c('People', 'people', 'refs:people'),
+      /* Dragged-to position, in working days from the estimate's start. On the
+         sheet so the round trip does not throw the arrangement away. */
+      c('PinDay', 'pin', 'num', { blank: null }),
       c('Note', 'note'),
       c('Hours', null, 'formula', {
         fx: (r, F) => `IF(${F.me('WorkItem')}${r}="","",${F.me('BaseHours')}${r}*${F.me('Qty')}${r})`,

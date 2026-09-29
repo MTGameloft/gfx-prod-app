@@ -58,8 +58,17 @@ const monthEnd = ym => {
  * column exists next to the one you typed.
  */
 function realCell(r, p, s) {
+  /* Logged hours are a running total with no date on them, so they are shown
+     as their own line rather than folded into a percentage of this month —
+     see `realAllocation`. Somebody with nothing scheduled but hours on the
+     clock still has a cell worth reading. */
+  const logged = r?.spentHours
+    ? `<div class="tiny mute" title="${esc(r.spentByProject.map(x =>
+          `${x.project?.code || 'no project'}: ${fmtNum(x.hours, 1)}h`).join(' · '))} — the running total recorded on tasks assigned to them, not limited to this month">
+         ${fmtNum(r.spentHours, 1)}h logged so far</div>`
+    : '';
   if (!r || !r.days) {
-    return '<span class="tiny mute">nothing assigned</span>';
+    return `<span class="tiny mute">nothing scheduled</span>${logged}`;
   }
   const chips = r.byProject.map(x => {
     const c = x.project?.color || 'var(--muted)';
@@ -72,7 +81,7 @@ function realCell(r, p, s) {
   return `<div class="row tiny" style="gap:5px;flex-wrap:wrap">${chips}</div>
     <div class="tiny ${tot != null && tot > 100 ? 'overdue' : 'mute'}"
       title="${fmtNum(r.days, 1)} person-days of work named on them, against ${fmtNum(r.available, 1)} working days this month">
-      ${tot == null ? 'no working days this month' : `${Math.round(tot)}% of their month`}</div>`;
+      ${tot == null ? 'no working days this month' : `${Math.round(tot)}% of their month`}</div>${logged}`;
 }
 
 function rosterTable(list) {
@@ -91,7 +100,7 @@ function rosterTable(list) {
     <thead><tr>
       <th>Person</th><th>Role</th><th>Contract</th>
       <th title="What you have put them down for. On paper — it drives no capacity maths.">Allocation</th>
-      <th title="What the work actually named on them comes to this month, as a share of their own working days. Work-breakdown lines they are named on, plus tasks assigned to them that have an estimate and a due date.">Real allocation</th>
+      <th title="What the work actually named on them comes to this month, as a share of their own working days — work-breakdown lines they are named on, plus tasks assigned to them with an estimate and a due date. The second line is the hours already logged against their tasks, which is a running total and not limited to this month.">Real allocation</th>
       <th class="num">Leave used</th><th class="num">Away this month</th><th class="num">Cost / mo</th><th></th>
     </tr></thead>
     <tbody>${raw(order.map(dv => {

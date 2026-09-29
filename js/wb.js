@@ -346,6 +346,9 @@ export function newLine(itemId, patch = {}) {
        line was before this existed — so an old line reads correctly without
        being migrated. */
     people: [],
+    /* Working days from the estimate's start, when this line has been dragged
+       to a date. Null means "wherever the schedule puts it". */
+    pin: null,
     ...patch,
   };
 }
@@ -404,11 +407,27 @@ export function lineSchedule(est, calcLines, state = S.get()) {
       const unstaffed = n === 0;
       const len = (l.hours || 0) / hpd / Math.max(1, n);
 
-      const from = Math.max(blockStart, ...keys.map(at));
+      /*
+       * A PINNED LINE STARTS WHERE IT WAS PUT.
+       *
+       * `l.pin` is a whole-working-day offset from the estimate's start, set
+       * by dragging the line's bar. It overrides the queue completely rather
+       * than acting as an earliest-start, because the point of dragging
+       * something to a date is that it goes there.
+       *
+       * It is therefore allowed to collide — two pinned lines can sit on the
+       * same person in the same week. That is deliberate: the capacity strip
+       * will show that person over 100%, which is a far more useful answer
+       * than the schedule quietly refusing the arrangement you asked for.
+       * Stored as an offset rather than a date so the whole breakdown still
+       * moves together when the estimate's start does.
+       */
+      const pinned = Number.isFinite(Number(l.pin)) && l.pin !== '' && l.pin != null;
+      const from = pinned ? Math.max(0, Number(l.pin)) : Math.max(blockStart, ...keys.map(at));
       const to = from + len;
-      for (const k of keys) free.set(k, to);
+      for (const k of keys) free.set(k, Math.max(at(k), to));
 
-      byLine.set(l.id, { from, len, to, people, crew: n, unstaffed, division: divId });
+      byLine.set(l.id, { from, len, to, people, crew: n, unstaffed, pinned, division: divId });
       if (to > blockEnd) blockEnd = to;
     }
 

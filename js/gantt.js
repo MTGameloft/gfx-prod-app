@@ -243,6 +243,7 @@ function barCell(bar, geo, sym) {
     bar.workDays ? `${fmtNum(bar.workDays, 0)} working days` : '',
     bar.hours ? `${fmtNum(bar.hours, 1)} person-hours` : '',
     bar.peopleNames?.length ? bar.peopleNames.join(', ') : (bar.crew ? `crew of ${bar.crew}` : ''),
+    bar.pinned ? 'pinned to this date — drag to move it, or unpin it from the row menu' : '',
     bar.cost ? fmtMoney(bar.cost, sym) : '',
   ].filter(Boolean).join(' · ');
 
@@ -250,7 +251,11 @@ function barCell(bar, geo, sym) {
      is a fact about the project, edited on the project; a division line is
      derived from its scope. Offering a handle that silently does nothing is
      worse than offering none. */
-  const movable = bar.kind === 'scope' || bar.kind === 'task' || bar.kind === 'request';
+  /* A work-breakdown line moves too: dropping it on a day is how you say
+     "do this then", which is the whole reason to look at a breakdown on a
+     calendar rather than in a table. */
+  const movable = bar.kind === 'scope' || bar.kind === 'task'
+               || bar.kind === 'request' || bar.kind === 'wbline';
 
   const ms = (bar.milestones || []).map(m => {
     if (m.date < geo.from || m.date > geo.to) return '';
@@ -267,6 +272,7 @@ function barCell(bar, geo, sym) {
   return `<div class="gx-track" data-b="${esc(bar.id)}">
     <div class="${cls.join(' ')}" style="left:${left}px;width:${w}px;--bar:${esc(bar.color)}"
          data-act="gx-bar" data-b="${esc(bar.id)}" data-ref="${esc(bar.ref || '')}"
+         data-line="${esc(bar.refLine || '')}"
          data-kind="${esc(bar.kind)}" data-start="${esc(bar.start)}" data-end="${esc(bar.end)}"
          data-move="${movable ? 1 : 0}" title="${esc(tip)}">
       ${label}
@@ -508,7 +514,7 @@ export function capacityStripHTML(load, geo, { onlyDivisions = null, sym = '$' }
     ${rows.map(r => `
       <div class="gx-cap-row">
         <div class="gx-cap-lbl" title="${esc(r.division.label)} — ${fmtNum(r.heads, 1)} ${r.heads === 1 ? 'person' : 'people'}${
-            r.perProject ? ' on this project, at their full working week' : ''}">
+            r.perProject ? ' counted on this chart, at their full working week each' : ''}">
           <span class="gx-dot" style="background:${esc(r.division.color || 'var(--muted)')}"></span>
           <span class="gx-name">${esc(r.division.id)}</span>
           <span class="gx-meta">${fmtNum(r.heads, 1)}p${r.shortfallDays > 0.5 ? ` · <b class="bad">−${fmtNum(r.shortfallDays, 0)}d</b>` : ''}</span>
@@ -797,6 +803,7 @@ export function wireGantt(host, handlers = {}) {
      */
     const payload = {
       id: d.el.dataset.b, ref: d.el.dataset.ref, kind: d.el.dataset.kind, days,
+      line: d.el.dataset.line || '',
       newStart: addDays(d.start, days),
       newEnd: addDays(d.end, days),
     };

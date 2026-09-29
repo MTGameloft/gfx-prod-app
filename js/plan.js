@@ -329,10 +329,11 @@ export function supply(periods, cal, { extraHeads = [], includePeople = null,
     byDivision: byDiv,
     allocByDivision: allocDiv,
     heads, skipped,
-    /* Whether this supply is the whole division or only what is allocated to
-       some projects. The strip says so, because "2p" means a different thing
-       in each case and the reader cannot tell them apart from the number. */
-    perProject: !!forProjects,
+    /* Whether this supply is the whole roster of a division or a narrowed
+       set - the people on a project, or the people on one breakdown. The
+       strip says so, because "2p" means a different thing in each case and
+       the reader cannot tell them apart from the number alone. */
+    perProject: !!(forProjects || includePeople),
     total: periods.map((_, i) => sum(divs, d => byDiv.get(d.id)[i])),
   };
 }
@@ -408,6 +409,28 @@ export function realAllocation({ from, to, state = S.get() } = {}) {
     }
   }
 
+  /*
+   * Hours already LOGGED against their tasks, beside the hours scheduled.
+   *
+   * `task.spent` is a single running total typed on the task — the app has no
+   * dated time log — so this cannot be cut to the window and is deliberately
+   * not mixed into the percentage, which is about a month. It is reported as
+   * what it is: the total recorded so far against work assigned to them, and
+   * the tooltip says so rather than implying a precision that is not there.
+   *
+   * Done tasks count. Time spent is spent, and leaving them out would make
+   * the number fall as work finished, which is the opposite of a total.
+   */
+  for (const t of state.tasks || []) {
+    const h = Number(t.spent) || 0;
+    if (!h || !t.assignee) continue;
+    const rec = bucket(t.assignee);
+    rec.spent = (rec.spent || 0) + h;
+    if (!rec.spentByProject) rec.spentByProject = new Map();
+    const k = t.project || '';
+    rec.spentByProject.set(k, (rec.spentByProject.get(k) || 0) + h);
+  }
+
   const avail = new Map((sup.rows || []).map(r => [r.person.id, r.total]));
   const res = new Map();
   for (const [id, rec] of out) {
@@ -415,6 +438,10 @@ export function realAllocation({ from, to, state = S.get() } = {}) {
     res.set(id, {
       days: rec.days,
       available: a,
+      spentHours: rec.spent || 0,
+      spentByProject: [...(rec.spentByProject || new Map()).entries()]
+        .map(([pid, hours]) => ({ project: S.byId(state.projects, pid) || null, hours }))
+        .sort((x, y) => y.hours - x.hours),
       /* No percentage at all when there are no working days to divide by —
          somebody entirely on leave for the window is not "infinitely
          allocated", there is simply nothing to take a share of. */
@@ -593,6 +620,7 @@ export function scopeBars(est, { crewOverride = null, startOverride = null,
         projectId: est.projectId, divisionId: d.division.id,
         start: dayAt(a), end: dayAt(b), workDays: b - a + 1,
         hours: l.hours, crew: s.crew, unstaffed: s.unstaffed,
+        pinned: s.pinned,
         cost: l.cost, demand: true,
         /* The whole point: this line's hours land on THESE people's weeks. */
         people: s.people,
@@ -899,19 +927,39 @@ export function requestBars(r, state = S.get()) {
  * defensible default, and the clipping to the visible window is what keeps a
  * bar that starts before the view from dumping its whole effort into week one.
  */
-function spreadBar(bar, periods, cal, pIdx, out, hours = bar.hours) {
+function spreadBar(bar, periods, cal, pIdx, out, hours = bar.hours, crew = 1) {
   const hpd = HPD();
-  const days = [];
+  /*
+   * A DAY OF SOMEBODY'S WORK IS A WHOLE DAY OF THEIRS.
+   *
+   * This used to divide the effort by the number of days the bar covers, and
+   * that quietly understated every piece of work whose length did not land on
+   * a whole day. 57 hours is 7.125 days, which draws as an 8-day bar, and
+   * 7.125 ÷ 8 posted 0.89 of a day against each of them — so one artist
+   * working solidly through a week came out at 89% of it and the strip said
+   * 11% still free. There was no free 11%: there was a bar rounded up to the
+   * next whole day and its effort smeared back across the rounding.
+   *
+   * So the rate is now the crew — a whole person-day per person per day —
+   * until the effort runs out, and the last day takes whatever remains. The
+   * total is identical; where it lands is not, and the last day is the only
+   * one that is ever part-full.
+   *
+   * Indexed off the bar's own start rather than off the window, so a bar that
+   * begins before the view still puts the right days in the visible part
+   * instead of restarting its ramp at the left edge.
+   */
+  const per = Math.max(1, crew);
+  const effortDays = hours / hpd;
   let c = bar.start, guard = 0;
   while (c <= bar.end && guard++ < 2000) {
-    if (cal.index.has(c) && cal.isWorking(c)) days.push(c);
+    if (cal.index.has(c) && cal.isWorking(c)) {
+      const k = workDaysBetween(bar.start, c) - 1;          // 0-based, inclusive count
+      const take = Math.min(per, effortDays - k * per);
+      if (take > 0) out[pIdx.get(c)] += take;
+    }
     c = addDays(c, 1);
   }
-  /* The bar's total working length, including any part outside the window —
-     the per-day rate must not change because you scrolled. */
-  const fullLength = Math.max(1, bar.workDays || workDaysBetween(bar.start, bar.end) + 1);
-  const perDay = (hours / hpd) / fullLength;
-  for (const iso of days) out[pIdx.get(iso)] += perDay;
 }
 
 /**
@@ -942,7 +990,11 @@ export function loadGrid(bars, periods, cal, sup, { useAllocation = true } = {})
     const lane = (b.scenario ? scnBy : demandBy).get(b.divisionId);
     if (!lane) continue;
     const before = lane.slice();
-    spreadBar(b, periods, cal, pIdx, lane);
+    /* The bar's own crew is its daily rate: two people on it spend two
+       person-days a day. Falls back to one, which is what an unstaffed or
+       unnamed bar has always been worth. */
+    const crew = Math.max(1, (b.people || []).length || b.crew || 1);
+    spreadBar(b, periods, cal, pIdx, lane, b.hours, crew);
     for (let i = 0; i < periods.length; i++) {
       if (lane[i] - before[i] > 0.001) {
         const k = `${b.divisionId}|${i}`;
@@ -955,7 +1007,11 @@ export function loadGrid(bars, periods, cal, sup, { useAllocation = true } = {})
     if (!who.length) continue;
     for (const id of who) {
       if (!personNeed.has(id)) { personNeed.set(id, periods.map(() => 0)); personBars.set(id, []); }
-      spreadBar(b, periods, cal, pIdx, personNeed.get(id), b.hours / who.length);
+      /* One person's share, at one person-day a day — which is the whole
+         point of a personal lane. Their share of the effort over the same
+         span comes to exactly the bar's own length, so somebody working
+         solidly through a week reads as a full week. */
+      spreadBar(b, periods, cal, pIdx, personNeed.get(id), b.hours / who.length, 1);
       personBars.get(id).push(b);
     }
   }

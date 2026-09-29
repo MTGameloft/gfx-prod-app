@@ -24,7 +24,7 @@ import { SENIORITY, thisMonth } from '../calc.js';
    people did it" with two different numbers is worse than having one. */
 import {
   scopeBars, crewSweep, recommendCrew, workCalendar, periodGrid, supply,
-  loadGrid, nextWorkDay, skippedNote,
+  loadGrid, nextWorkDay, skippedNote, workDaysBetween,
 } from '../plan.js';
 import { ganttHTML, capacityStripHTML, wireGantt, geometry, zoomOf } from '../gantt.js';
 import { bulkQueueDialog } from '../jiraui.js';
@@ -36,7 +36,7 @@ import {
   estimate, feasibility, rollUp, saveEstimate, removeEstimate, saveItem, removeItem,
   estimateToTasks, crewOf, logEstimate, unlogEstimate, isLogged, logRollUp,
   wbPresets, wbPreset, savePreset, removePreset, linesToPreset,
-  linePeople, namedIn,
+  linePeople, namedIn, namedOn,
 } from '../wb.js';
 
 const TABS = [
@@ -200,7 +200,9 @@ function calcTab(ctx) {
             <circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/>
             <circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></td>
         <td><span class="pill-div" style="background:${esc(divColor(l.division))}">${esc(l.division)}</span></td>
-        <td><b>${esc(l.name)}</b>${l.note ? `<div class="tiny mute">${esc(l.note)}</div>` : ''}</td>
+        <td><b>${esc(l.name)}</b>${l.pin != null
+             ? ' <span class="chip tiny" title="Dragged to a date on the Schedule. Unpin it from this row’s menu to let it schedule itself again.">pinned</span>' : ''}${
+             l.note ? `<div class="tiny mute">${esc(l.note)}</div>` : ''}</td>
         <td><select data-change="line" data-k="complexity" style="width:100%">${
           sel(WB_COMPLEXITY.map(c => ({ v: c.id, t: `${c.label} ×${c.factor}` })), l.complexity)}</select></td>
         <td><select data-change="line" data-k="approach" style="width:100%"
@@ -379,11 +381,23 @@ function schedulePanel(draft, r) {
      a week that is red here is the same week that is red there. */
   const cal = workCalendar(win.from, win.to);
   const periods = periodGrid(win.from, win.to, 'week', cal);
-  /* Weighed against the capacity allocated to this estimate's project, the
-     same as that project's own chart — a breakdown for Let's Story is not
-     entitled to the whole 2D team. With no project chosen there is nothing to
-     narrow by, so it falls back to the division. */
+  /*
+   * Weighed against THE PEOPLE ON THIS BREAKDOWN, once anybody is named.
+   *
+   * This chart is about one deliverable, so the question it answers is
+   * whether the people doing that deliverable can. Falling back to everybody
+   * on the project put a third artist in the denominator of a breakdown that
+   * two people are doing — the strip said "3p" over two person lanes, which
+   * is a discrepancy the reader has to explain to themselves, and the number
+   * it produced was a fifth too generous.
+   *
+   * With nobody named there is nothing to narrow by and it falls back to the
+   * project, then to the division — each step widening only when the narrower
+   * question has no answer.
+   */
+  const named = namedOn(draft);
   const sup = supply(periods, cal, {
+    includePeople: named.length ? new Set(named) : null,
     forProjects: draft.projectId ? new Set([draft.projectId]) : null,
   });
   const load = loadGrid(bars, periods, cal, sup, { useAllocation: false });
@@ -1547,6 +1561,13 @@ export default {
         menu(ev, [
           { label: 'Edit…', icon: 'edit', run: () => editLineDialog(l).then(ok => ok && redraw()) },
           { label: 'Who is on it…', icon: 'people', run: () => assignDialog(l).then(ok => ok && redraw()) },
+          /* Only offered when there is a pin to clear. A permanently present
+             "unpin" on a line that was never pinned is a control that does
+             nothing, which teaches you to distrust the menu. */
+          ...(l.pin != null ? [{ label: 'Unpin — let it schedule itself', icon: 'undo', run: () => {
+            l.pin = null; dirty = true; redraw();
+            toast(`“${l.name}” is back on the schedule`, 'ok');
+          } }] : []),
           { label: 'Duplicate', icon: 'file', run: () => {
             draft.lines.splice(draft.lines.indexOf(l) + 1, 0, { ...l, id: S.uid('wbl') });
             dirty = true; redraw();
@@ -1784,6 +1805,32 @@ export default {
         redraw();
       },
       onCell: () => toast('Open the Plan to see this week against every other project', '', 4000),
+      /*
+       * Drop a line on a day and it stays there.
+       *
+       * The pin is a whole-working-day offset from the estimate's start, so
+       * the arrangement survives moving the whole deliverable. Dragging the
+       * deliverable's own bar still moves the start date, which carries
+       * everything with it.
+       */
+      onMove: d => {
+        if (d.kind === 'scope') {
+          draft.startDate = nextWorkDay(d.newStart);
+          dirty = true; redraw();
+          toast(`Starts ${fmtDate(draft.startDate, 'long')}`, 'ok');
+          return;
+        }
+        if (d.kind !== 'wbline' || !d.line) return;
+        const l = draft.lines.find(x => x.id === d.line);
+        if (!l || !draft.startDate) return;
+        /* Whole working days between the estimate's start and where it was
+           dropped. `workDaysBetween` counts inclusively, so the start itself
+           is day one and offset zero. */
+        const off = Math.max(0, workDaysBetween(draft.startDate, nextWorkDay(d.newStart)) - 1);
+        l.pin = off;
+        dirty = true; redraw();
+        toast(`“${l.name}” pinned to ${fmtDate(nextWorkDay(d.newStart), 'long')}`, 'ok', 4000);
+      },
       /* Same drag handle as the other two charts, remembered with this
          screen's other view preferences. */
       onHeight: px => { ui.height = px; saveUi(); },
