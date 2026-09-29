@@ -508,7 +508,7 @@ export function capacityStripHTML(load, geo, { onlyDivisions = null, sym = '$' }
     ${rows.map(r => `
       <div class="gx-cap-row">
         <div class="gx-cap-lbl" title="${esc(r.division.label)} — ${fmtNum(r.heads, 1)} ${r.heads === 1 ? 'person' : 'people'}${
-            r.perProject ? ' allocated to this project' : ''}">
+            r.perProject ? ' on this project, at their full working week' : ''}">
           <span class="gx-dot" style="background:${esc(r.division.color || 'var(--muted)')}"></span>
           <span class="gx-name">${esc(r.division.id)}</span>
           <span class="gx-meta">${fmtNum(r.heads, 1)}p${r.shortfallDays > 0.5 ? ` · <b class="bad">−${fmtNum(r.shortfallDays, 0)}d</b>` : ''}</span>

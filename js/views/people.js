@@ -9,12 +9,13 @@ import * as S from '../store.js';
 import {
   h, raw, esc, icon, avatar, toast, dialog, formDlg, confirmDlg, menu, acts, bar,
   fmtDate, fmtMoney, fmtMoneyFull, today, download, toCsv, parseCsv, pickFile,
-  sum, groupBy, clamp, initials, hashColor,
+  sum, groupBy, clamp, initials, hashColor, fmtNum,
 } from '../ui.js';
 import { personPage, personActions, TABS, logOneToOne } from '../personpage.js';
 import { capacity, capacityPct, leaveUsed, leaveDaysInMonth, thisMonth, rateFor, taskStats,
          SENIORITY, CONTRACT } from '../calc.js';
 import { divisionLabel } from '../jira.js';
+import { realAllocation } from '../plan.js';
 
 // SENIORITY and CONTRACT now come from calc.js — see the import above.
 
@@ -42,22 +43,61 @@ const allocTotal = p => sum(p.alloc || [], a => a.pct);
 
 /* ---------- roster ------------------------------------------------------- */
 
+/** Last day of a YYYY-MM, so a month window ends where the month does. */
+const monthEnd = ym => {
+  const [y, m] = ym.split('-').map(Number);
+  return `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`;
+};
+
+/**
+ * The Real allocation cell: one chip per project, then the total.
+ *
+ * The total is the number worth colouring. Over 100% means more work is
+ * named on this person this month than they have days for — which is a fact
+ * about them, not about any one of the projects, and it is the reason this
+ * column exists next to the one you typed.
+ */
+function realCell(r, p, s) {
+  if (!r || !r.days) {
+    return '<span class="tiny mute">nothing assigned</span>';
+  }
+  const chips = r.byProject.map(x => {
+    const c = x.project?.color || 'var(--muted)';
+    const code = x.project?.code || x.project?.name || 'no project';
+    return `<span class="chip" style="background:${c}22;color:${c}"
+      title="${esc(code)} — ${fmtNum(x.days, 1)} of ${fmtNum(r.available, 1)} working days">${
+      esc(code)} ${x.pct == null ? '—' : Math.round(x.pct) + '%'}</span>`;
+  }).join('');
+  const tot = r.pct;
+  return `<div class="row tiny" style="gap:5px;flex-wrap:wrap">${chips}</div>
+    <div class="tiny ${tot != null && tot > 100 ? 'overdue' : 'mute'}"
+      title="${fmtNum(r.days, 1)} person-days of work named on them, against ${fmtNum(r.available, 1)} working days this month">
+      ${tot == null ? 'no working days this month' : `${Math.round(tot)}% of their month`}</div>`;
+}
+
 function rosterTable(list) {
   const s = S.get();
   const ym = thisMonth();
+  /* What the work with their name on it actually comes to this month, beside
+     what the allocation says it should. Computed over the calendar month so
+     it lines up with the two columns either side of it, which are also "this
+     month". */
+  const real = realAllocation({ from: `${ym}-01`, to: monthEnd(ym) });
   const byDiv = groupBy(list, p => p.division || '—');
   const order = s.divisions.map(d => d.id).filter(d => byDiv[d]).concat(Object.keys(byDiv).filter(k => !s.divisions.some(d => d.id === k)));
 
   return h`
   <div class="card"><div class="tbl-wrap"><table class="tbl">
     <thead><tr>
-      <th>Person</th><th>Role</th><th>Contract</th><th>Allocation</th>
+      <th>Person</th><th>Role</th><th>Contract</th>
+      <th title="What you have put them down for. On paper — it drives no capacity maths.">Allocation</th>
+      <th title="What the work actually named on them comes to this month, as a share of their own working days. Work-breakdown lines they are named on, plus tasks assigned to them that have an estimate and a due date.">Real allocation</th>
       <th class="num">Leave used</th><th class="num">Away this month</th><th class="num">Cost / mo</th><th></th>
     </tr></thead>
     <tbody>${raw(order.map(dv => {
       const div = S.byId(s.divisions, dv);
       const rows = byDiv[dv];
-      return `<tr class="divhead"><td colspan="8" style="background:var(--bg-sunken);font-weight:700;font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;padding:5px 12px">
+      return `<tr class="divhead"><td colspan="9" style="background:var(--bg-sunken);font-weight:700;font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;padding:5px 12px">
           <span class="pill-div" style="background:${div?.color || 'var(--muted)'}">${esc(dv)}</span>
           <span class="mute" style="margin-left:7px">${esc(div?.name || '')} · ${rows.length} ${rows.length === 1 ? 'person' : 'people'}</span>
         </td></tr>` +
@@ -82,13 +122,14 @@ function rosterTable(list) {
               }).join('') || '<span class="mute">unallocated</span>'}</div>
               ${tot !== 100 && (p.alloc || []).length ? `<div class="tiny ${tot > 100 ? 'overdue' : 'mute'}">${tot}% total</div>` : ''}
             </td>
+            <td style="min-width:170px">${realCell(real.get(p.id), p, s)}</td>
             <td class="num tiny">${used} / ${p.leaveAllowance ?? 15}</td>
             <td class="num tiny ${away > 3 ? 'overdue' : ''}">${away || ''}</td>
             <td class="num tiny">${cost ? fmtMoneyFull(cost, s.settings.currencySymbol) : '—'}</td>
             <td class="act"><button class="btn icon sm subtle" data-act="menu"><svg class="ico"><use href="#i-dots"></use></svg></button></td>
           </tr>`;
         }).join('');
-    }).join('') || '<tr><td colspan="8" class="tiny mute" style="padding:24px;text-align:center">Nobody matches those filters.</td></tr>')}</tbody>
+    }).join('') || '<tr><td colspan="9" class="tiny mute" style="padding:24px;text-align:center">Nobody matches those filters.</td></tr>')}</tbody>
   </table></div></div>`;
 }
 

@@ -190,25 +190,40 @@ function periodIndexOf(periods, cal) {
  *        is a real thing to model, and a hire that starts mid-window only
  *        contributes from `from`.
  * @param {Set|null} [o.forProjects]
- *        Narrow the supply to the capacity ALLOCATED to these projects.
+ *        Narrow the supply to the PEOPLE ON these projects — who, not how
+ *        much. Everybody who is on one is counted at their whole working
+ *        week; see the note at `memberOf` and at the `onIt` test below.
  *
- *        Everything above describes the division's whole pair of hands, which
- *        is the right denominator on a portfolio-wide chart: the question
- *        there is "can the 3D team take this", and the team is the team.
+ *        Without it the supply is the division's whole roster, which is the
+ *        right denominator on a portfolio-wide chart: the question there is
+ *        "can the 3D team take this", and the team is the team. On one
+ *        project's chart the question is "can the people on this project take
+ *        it", and weighing a two-person project's scope against all ten 2D
+ *        artists makes it look like a fifth of the load it is.
  *
- *        On ONE project's chart it is the wrong denominator, and wrong in the
- *        flattering direction. A project that has two of the ten 2D artists
- *        was being weighed against all ten, so its scope looked like a fifth
- *        of the load it actually is on the people doing it. With this set,
- *        each person contributes their days times the share of themselves
- *        they are allocated to these projects — two people at 50% are one
- *        person's capacity — and anybody with no allocation to them is not in
- *        the denominator at all.
- *
- *        Pass this and leave `useAllocation` off in `loadGrid`, or allocation
- *        is applied twice: once shrinking the supply and again as the floor
- *        under demand, which reads as fully committed whatever the scope is.
+ *        Pass this and leave `useAllocation` off in `loadGrid`. The
+ *        allocation floor under demand is a statement about the same
+ *        percentages this deliberately no longer reads, and mixing the two
+ *        readings in one chart is how the numbers stopped meaning anything.
  */
+/**
+ * Is this person on one of these projects?
+ *
+ * Two ways to be, and both count. Allocation is the on-paper answer — you put
+ * them on it. Their name on a work-breakdown line is the answer from the work
+ * itself, and it has to count too, or naming somebody on a project they were
+ * never formally allocated to would book their time against a chart that has
+ * no capacity for them, which reads as a division that cannot do its own work.
+ */
+export function memberOf(person, projectIds, state = S.get()) {
+  if ((person.alloc || []).some(a => projectIds.has(a.projectId) && (Number(a.pct) || 0) > 0)) return true;
+  for (const e of state.wbEstimates || []) {
+    if (!projectIds.has(e.projectId)) continue;
+    for (const l of e.lines || []) if ((l.people || []).includes(person.id)) return true;
+  }
+  return (state.tasks || []).some(t => t.assignee === person.id && projectIds.has(t.project));
+}
+
 export function supply(periods, cal, { extraHeads = [], includePeople = null,
                                        forProjects = null } = {}) {
   const s = S.get();
@@ -235,19 +250,29 @@ export function supply(periods, cal, { extraHeads = [], includePeople = null,
       skipped.push({ person: p, why: p.division ? 'unknown' : 'none' });
       continue;
     }
-    /* The share of this person that belongs to the projects being asked
-       about. One for a portfolio-wide supply; their allocation percentage on
-       a single project's chart, and zero — so they are not in the denominator
-       at all — for somebody who is not on it. Capped at the whole person for
-       the same reason the allocation floor is: one over-100% record must not
-       manufacture capacity that does not exist. */
-    const share = forProjects
-      ? Math.min(1, sum((p.alloc || []).filter(a => forProjects.has(a.projectId)),
-                        a => (Number(a.pct) || 0) / 100))
-      : 1;
-    if (share <= 0) continue;
-    heads.set(p.division, heads.get(p.division) + share);
-    const cap = (capacityPct(p) / 100) * share;
+    /*
+     * `forProjects` says WHO, never HOW MUCH.
+     *
+     * It decides whether a person is on this project's chart at all — from
+     * their allocation, or from their name being on its work — and then they
+     * bring their WHOLE working week with them.
+     *
+     * It used to multiply their capacity by that allocation percentage, and
+     * that was wrong in a way that showed: somebody put down as 10% on a
+     * project had half a day a week of capacity, so the first real piece of
+     * work named on them read as several hundred per cent over. A person on
+     * two projects does not own two fifths of a pair of hands on Tuesday;
+     * they own one pair of hands, and the allocation is a statement of intent
+     * about how they mean to divide it.
+     *
+     * So the allocation percentage is on-paper intent and drives no capacity
+     * arithmetic anywhere. What the work actually consumes is measured from
+     * the work — see `realAllocation()`.
+     */
+    const onIt = !forProjects || memberOf(p, forProjects, s);
+    if (!onIt) continue;
+    heads.set(p.division, heads.get(p.division) + 1);
+    const cap = capacityPct(p) / 100;
     const away = leaveDaysMap(p.id);           // iso -> the leave record
     const own = periods.map(() => 0);
 
@@ -329,6 +354,80 @@ export function skippedNote(sup) {
   if (unknown) bits.push(`${unknown} in a division that no longer exists`);
   return `${list.length} active ${list.length === 1 ? 'person is' : 'people are'} not counted in any `
        + `division's capacity — ${bits.join(', ')}.`;
+}
+
+/**
+ * REAL allocation: what the work actually named on somebody comes to.
+ *
+ * `person.alloc` is on-paper intent — you typed 40% and meant it, and it is
+ * still worth having, because a plan is partly a statement of what you meant
+ * to do. This is the other half: over a window, add up the person-days of
+ * every piece of work with this person's name on it, per project, and divide
+ * by the working days they actually have in that window.
+ *
+ * WHY BOTH. They answer different questions and disagreeing is the useful
+ * part. On paper 40% on Let's Story, in practice 85% of their month going
+ * into it, is precisely the conversation this is for — and neither number on
+ * its own can start it.
+ *
+ * Counts the same two kinds of assignment the capacity lanes do: a name on a
+ * work-breakdown line, and a task with an assignee, an estimate and a due
+ * date. Work with nobody's name on it is not in here at all, which is the
+ * honest answer — unassigned work is not yet anybody's time.
+ *
+ * @returns {Map<string, {days:number, available:number, pct:number,
+ *                        byProject:Array<{project, days, pct}>}>} keyed by person id
+ */
+export function realAllocation({ from, to, state = S.get() } = {}) {
+  const cal = workCalendar(from, to);
+  const periods = periodGrid(from, to, 'month', cal);
+  const pIdx = periodIndexOf(periods, cal);
+  const sup = supply(periods, cal);
+  const bars = buildBars({ showTasks: true, state });
+
+  const out = new Map();
+  const bucket = id => {
+    if (!out.has(id)) out.set(id, { days: 0, byProject: new Map() });
+    return out.get(id);
+  };
+
+  for (const b of bars) {
+    if (!b.demand || !b.hours || !(b.people || []).length) continue;
+    const share = b.hours / b.people.length;
+    for (const id of b.people) {
+      /* Spread across the window the same way the capacity strip does, so a
+         bar that only half overlaps the window contributes half. */
+      const lane = periods.map(() => 0);
+      spreadBar(b, periods, cal, pIdx, lane, share);
+      const days = sum(lane);
+      if (days <= 0.0001) continue;
+      const rec = bucket(id);
+      rec.days += days;
+      const k = b.projectId || '';
+      rec.byProject.set(k, (rec.byProject.get(k) || 0) + days);
+    }
+  }
+
+  const avail = new Map((sup.rows || []).map(r => [r.person.id, r.total]));
+  const res = new Map();
+  for (const [id, rec] of out) {
+    const a = avail.get(id) || 0;
+    res.set(id, {
+      days: rec.days,
+      available: a,
+      /* No percentage at all when there are no working days to divide by —
+         somebody entirely on leave for the window is not "infinitely
+         allocated", there is simply nothing to take a share of. */
+      pct: a > 0 ? (rec.days / a) * 100 : null,
+      byProject: [...rec.byProject.entries()]
+        .map(([pid, days]) => ({
+          project: S.byId(state.projects, pid) || null,
+          days, pct: a > 0 ? (days / a) * 100 : null,
+        }))
+        .sort((x, y) => y.days - x.days),
+    });
+  }
+  return res;
 }
 
 /**
@@ -551,6 +650,12 @@ export function taskBar(t, state = S.get()) {
     color: div.color || 'var(--muted)',
     ref: t.id, status: t.status,
     overdue: t.status !== 'done' && t.due < today(),
+    /* An assigned task books that person's time exactly as a named breakdown
+       line does. It is the same statement — this work is theirs — and leaving
+       it out would mean a person's capacity lane showed their estimates and
+       not their board. */
+    people: t.assignee ? [t.assignee] : [],
+    peopleNames: t.assignee ? [S.personName(t.assignee)] : [],
     sub: t.assignee ? S.personName(t.assignee) : 'Unassigned',
   };
 }
