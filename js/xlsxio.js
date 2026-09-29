@@ -186,6 +186,14 @@ function toCell(col, rec, state) {
      */
     case 'rich': return richToText(v);
     default:
+      /* Several pointers in one cell, as names. `refs:` rather than `ref:`
+         because a work-breakdown line can have two artists on it, and a
+         column that can only hold one would lose the second every time the
+         sheet went round. */
+      if (col.t.startsWith('refs:')) {
+        const kind = col.t.slice(5);
+        return (Array.isArray(v) ? v : []).map(id => refLabel(state, kind, id)).filter(Boolean).join(', ');
+      }
       if (col.t.startsWith('ref:')) return refLabel(state, col.t.slice(4), v);
       return v == null ? '' : String(v);
   }
@@ -244,6 +252,25 @@ function fromCell(col, raw, idx) {
       return { ok: true, value: blank ? []
         : String(raw).split(/[,;]/).map(s => s.trim()).filter(Boolean) };
     default: {
+      /* A comma-separated list of names into a list of ids. A name that no
+         longer matches anybody is DROPPED with a warning rather than failing
+         the row — the same call as a single optional pointer, and for the
+         same reason: losing the whole work item because one artist left the
+         studio would be a far worse answer. */
+      if (col.t.startsWith('refs:')) {
+        const kind = col.t.slice(5);
+        if (blank) return { ok: true, value: [] };
+        const names = String(raw).split(/[,;]/).map(s => s.trim()).filter(Boolean);
+        const ids = [], lost = [];
+        for (const nm of names) {
+          const id = idx[kind]?.get(norm(nm));
+          if (id) { if (!ids.includes(id)) ids.push(id); } else lost.push(nm);
+        }
+        return { ok: true, value: ids,
+                 warn: lost.length
+                   ? `${col.h}: no ${REFS[kind].noun} matches ${lost.map(x => `"${x}"`).join(', ')} — dropped`
+                   : undefined };
+      }
       if (col.t.startsWith('ref:')) {
         const kind = col.t.slice(4);
         if (blank) return { ok: true, value: col.req ? null : '' };
@@ -442,6 +469,13 @@ function columnDoc(name, state) {
     else if (col.t === 'date')    { type = 'date';   notes = 'YYYY-MM-DD. A real Excel date works too.'; }
     else if (col.t === 'bool')    { type = 'yes/no'; notes = 'TRUE or FALSE.'; }
     else if (col.t === 'list')    { type = 'list';   notes = 'Several values in one cell, separated by commas.'; }
+    else if (col.t.startsWith('refs:')) {
+      const spec2 = REFS[col.t.slice(5)];
+      type = 'lookup list';
+      notes = `Several ${spec2.noun}s in one cell, separated by commas — `
+            + `each must be ${spec2.wants} from the ${spec2.sheet} sheet. `
+            + 'A name that matches nobody is dropped and reported.';
+    }
     else if (col.t === 'num')     { type = 'number'; notes = col.blank == null ? 'Blank counts as 0.' : `Blank counts as ${col.blank}.`; }
     else if (col.t.startsWith('ref:')) {
       const kind = col.t.slice(4);

@@ -279,11 +279,42 @@ export function newEstimate(patch = {}) {
  * would turn its duration into infinity. Absent means one; zero means zero.
  */
 export function crewOf(est, divisionId) {
+  /* Naming people IS setting the crew. Once a division's lines carry names,
+     the headcount is not a planning knob any more — it is a fact, and two
+     places to say the same thing is two places to disagree. The Calculator
+     shows the number and stops taking typing; the box is live again the
+     moment the last name comes off. */
+  const named = namedIn(est, divisionId);
+  if (named.length) return named.length;
+
   const raw = est?.crew?.[divisionId];
   if (raw === undefined || raw === null || raw === '') return 1;
   const n = Math.floor(Number(raw));
   return Number.isFinite(n) && n >= 0 ? n : 1;
 }
+
+/** The people on one line, as ids, with anything stale dropped. */
+export function linePeople(line, state = S.get()) {
+  const ids = Array.isArray(line?.people) ? line.people : [];
+  return ids.filter(id => (state.people || []).some(p => p.id === id && p.active !== false));
+}
+
+/** Everyone named on any line of one division, de-duplicated, in line order. */
+export function namedIn(est, divisionId, state = S.get()) {
+  const seen = new Set();
+  for (const l of est?.lines || []) {
+    if (l.division !== divisionId) continue;
+    for (const id of linePeople(l, state)) seen.add(id);
+  }
+  return [...seen];
+}
+
+/** Everyone named anywhere on an estimate. */
+export const namedOn = (est, state = S.get()) => {
+  const seen = new Set();
+  for (const l of est?.lines || []) for (const id of linePeople(l, state)) seen.add(id);
+  return [...seen];
+};
 
 /**
  * A line, resolved against the catalogue at the moment it is added.
@@ -311,8 +342,83 @@ export function newLine(itemId, patch = {}) {
     qty: 1,
     seniority: defaultSeniority(division),
     note: '',
+    /* Who is doing it. Empty means the anonymous crew, which is what every
+       line was before this existed — so an old line reads correctly without
+       being migrated. */
+    people: [],
     ...patch,
   };
+}
+
+/**
+ * WHEN EACH LINE HAPPENS, in working days from the start of the estimate.
+ *
+ * Pure arithmetic on a continuous day axis — no calendar, no dates. The
+ * calendar lives in plan.js and plan.js imports this file, so a date-aware
+ * version here would be a cycle; more to the point, offsets are the part that
+ * has to agree between the Duration card and the chart, and a number cannot
+ * disagree with itself. `scopeBars()` turns these offsets into working days.
+ *
+ * THE RULE, in one sentence: a person does one thing at a time, so two lines
+ * with different people on them happen at once and two lines sharing a person
+ * queue up behind each other.
+ *
+ * Resources are person ids, or one anonymous `pool:<division>` for lines with
+ * nobody named — the crew, as it has always been. That fallback is what makes
+ * this BACKWARD COMPATIBLE: with nobody assigned anywhere, every line in a
+ * division queues on that division's pool, each taking hours ÷ hoursPerDay ÷
+ * crew, so the division's length comes to exactly the total hours ÷ hpd ÷
+ * crew it has always been, and the parallel/sequential choice between
+ * divisions still decides the rest. Assigning nobody changes no number.
+ *
+ * @returns {{ byLine: Map, byDivision: Map, elapsedBase: number }}
+ */
+export function lineSchedule(est, calcLines, state = S.get()) {
+  const cfg = wbSettings();
+  const hpd = Math.max(1, cfg.hoursPerDay);
+  const byLine = new Map();
+  const byDivision = new Map();
+  /* One map across every division, so somebody named on two disciplines of
+     the same deliverable still cannot be in two places at once. */
+  const free = new Map();
+  const at = k => free.get(k) || 0;
+
+  const order = divisionsFor(est, state).map(d => d.id);
+  const seq = est.parallel === false;
+  let blockStart = 0;
+  let last = 0;
+
+  for (const divId of order) {
+    const mine = calcLines.filter(l => l.division === divId);
+    if (!mine.length) continue;
+    const crew = crewOf(est, divId);
+    let blockEnd = blockStart;
+
+    for (const l of mine) {
+      const people = linePeople(l, state);
+      const keys = people.length ? people : [`pool:${divId}`];
+      /* Nobody on it never finishes. Rather than an infinite bar nothing can
+         draw, it is laid out at one person's pace and flagged — the row says
+         so in red, which is more use than a plausible-looking length. */
+      const n = people.length || crew;
+      const unstaffed = n === 0;
+      const len = (l.hours || 0) / hpd / Math.max(1, n);
+
+      const from = Math.max(blockStart, ...keys.map(at));
+      const to = from + len;
+      for (const k of keys) free.set(k, to);
+
+      byLine.set(l.id, { from, len, to, people, crew: n, unstaffed, division: divId });
+      if (to > blockEnd) blockEnd = to;
+    }
+
+    const froms = mine.map(l => byLine.get(l.id).from);
+    byDivision.set(divId, { from: Math.min(...froms), to: blockEnd, len: blockEnd - Math.min(...froms) });
+    if (blockEnd > last) last = blockEnd;
+    if (seq) blockStart = blockEnd;
+  }
+
+  return { byLine, byDivision, elapsedBase: last };
 }
 
 /**
@@ -348,19 +454,34 @@ export function estimate(est, state = S.get()) {
              hours, seniorityUsed: sen, rate, cost: hours * rate };
   });
 
+  /* When each line happens, and therefore how long each division takes. One
+     schedule, read here for the Duration card and again by `scopeBars()` for
+     the chart, so the two cannot drift. */
+  const sched = lineSchedule(est, lines, state);
+  for (const l of lines) l.slot = sched.byLine.get(l.id) || null;
+
   /* Per division, because that is the unit of both crew and rate. */
   const byDivision = divisionsFor(est, state).map(d => {
     const mine = lines.filter(l => l.division === d.id);
     const hours = mine.reduce((n, l) => n + l.hours, 0);
     const cost = mine.reduce((n, l) => n + l.cost, 0);
     const crew = d.crew ? crewOf(est, d.id) : 1;
+    const block = sched.byDivision.get(d.id);
     return {
       division: d, lines: mine.length, hours, cost, crew,
       days: hours / hpd,                    // effort in days, crew-independent
-      /* Work with nobody on it never finishes, and saying so is more use than
+      /* From the schedule, not from hours ÷ crew, because with people named
+         the two are different questions: three artists on three lines that
+         share nobody finish in the time of the longest line, not a third of
+         the total. With nobody named the schedule gives back exactly the old
+         hours ÷ hpd ÷ crew, so this is not a change for an unassigned
+         estimate. Nobody on it never finishes, and saying so is more use than
          quietly pretending one person is doing it. Cost is unaffected: the
          effort is still the effort, which is why it is a separate number. */
-      elapsedDays: crew > 0 ? hours / hpd / crew : (hours > 0 ? Infinity : 0),
+      elapsedDays: crew > 0 || namedIn(est, d.id, state).length
+        ? (block ? block.len : 0)
+        : (hours > 0 ? Infinity : 0),
+      people: namedIn(est, d.id, state),
       unstaffed: d.crew && crew === 0 && hours > 0,
       seniority: est.seniority?.[d.id] || defaultSeniority(d.id),
     };
@@ -375,10 +496,12 @@ export function estimate(est, state = S.get()) {
   const totalHours = effortHours * (1 + upliftPct / 100);
   const totalCost = baseCost * (1 + upliftPct / 100);
 
-  /* Parallel: the longest discipline sets the date. Sequential: they add up. */
-  const elapsedBase = est.parallel === false
-    ? byDivision.reduce((n, d) => n + d.elapsedDays, 0)
-    : byDivision.reduce((n, d) => Math.max(n, d.elapsedDays), 0);
+  /* The schedule already stacked the divisions (sequential) or overlaid them
+     (parallel) and already queued anyone named on two of them, so the finish
+     is simply where it ended. Summing or max-ing the lanes here would be a
+     second opinion about the same fact. */
+  const elapsedBase = byDivision.some(d => d.elapsedDays === Infinity)
+    ? Infinity : sched.elapsedBase;
   const elapsedDays = elapsedBase * (1 + upliftPct / 100);
 
   const unstaffed = byDivision.filter(d => d.unstaffed).map(d => d.division);
@@ -404,6 +527,10 @@ export function estimate(est, state = S.get()) {
     finish: est.startDate && Number.isFinite(elapsedDays)
       ? addWorkingDays(est.startDate, Math.ceil(elapsedDays)) : '',
     crewTotal: byDivision.reduce((n, d) => n + (d.division.crew ? d.crew : 0), 0),
+    /* The schedule, so `scopeBars()` places the same line in the same place
+       rather than working it out a second time. */
+    sched,
+    people: namedOn(est, state),
     hpd,
   };
 }
@@ -683,9 +810,14 @@ export function estimateToTasks(est, { status = 'backlog', projectId = '' } = {}
          */
         title: `${l.name}${l.qty > 1 ? ` ×${l.qty}` : ''}`,
         project: projectId || est.projectId || '',
+        /* Carry the assignment through when the line has exactly one person
+           on it. A task holds one assignee, so a line shared by two cannot be
+           expressed here — those arrive unassigned rather than silently
+           handing the whole thing to whichever name came first. */
+        assignee: linePeople(l, s).length === 1 ? linePeople(l, s)[0] : '',
         /* PROD is a real division now, so it keeps it like any other. */
         division: l.division,
-        assignee: '', status, priority: 'normal', due: '',
+        status, priority: 'normal', due: '',
         estimate: Math.round(l.hours * 10) / 10, spent: 0,
         tags: ['WB'], checklist: [], objectiveId: null, order,
         desc: `From work-breakdown estimate “${est.name || 'untitled'}”.\n`

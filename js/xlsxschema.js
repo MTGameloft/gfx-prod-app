@@ -668,7 +668,7 @@ export const SHEETS = {
       parent: 'wbEstimates', field: 'lines', kind: 'array',
       pk: [{ h: 'Estimate', f: 'name' }],
     },
-    note: 'The breakdown, one row per work item in an estimate. Estimate must match a Name on WB_Estimates. Hours is calculated for reading — the app recomputes it from BaseHours × complexity × Qty × the approach factor, so editing it changes nothing.',
+    note: 'The breakdown, one row per work item in an estimate. Estimate must match a Name on WB_Estimates. Hours is calculated for reading — the app recomputes it from BaseHours × complexity × Qty × the approach factor, so editing it changes nothing. People is who is doing that line, several names separated by commas; naming anybody schedules the line against them and sets that division’s crew.',
     cols: [
       c('Estimate', '@pk:name', 'parent', { dv: 'WbEstimate' }),
       c('ID', 'id', 'text'),
@@ -680,6 +680,10 @@ export const SHEETS = {
       c('Approach', 'approach', 'text', { enum: WB_APPROACH_IDS, dv: 'WbApproach' }),
       c('Qty', 'qty', 'num'),
       c('Seniority', 'seniority', 'text', { enum: ['', ...SENIORITY], dv: 'Seniority' }),
+      /* Who is on this line. It has to be a column or the round trip would
+         delete it: a child sheet rebuilds each row from the columns it has,
+         so a field the sheet does not mention is not preserved, it is gone. */
+      c('People', 'people', 'refs:people'),
       c('Note', 'note'),
       c('Hours', null, 'formula', {
         fx: (r, F) => `IF(${F.me('WorkItem')}${r}="","",${F.me('BaseHours')}${r}*${F.me('Qty')}${r})`,

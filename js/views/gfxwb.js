@@ -36,6 +36,7 @@ import {
   estimate, feasibility, rollUp, saveEstimate, removeEstimate, saveItem, removeItem,
   estimateToTasks, crewOf, logEstimate, unlogEstimate, isLogged, logRollUp,
   wbPresets, wbPreset, savePreset, removePreset, linesToPreset,
+  linePeople, namedIn,
 } from '../wb.js';
 
 const TABS = [
@@ -125,14 +126,26 @@ function calcTab(ctx) {
            it below the boxes it belongs beside. -->
       <div class="wb-rows">
         <div class="wb-rowgrp">
-          <div class="wb-cap">Crew — divides duration, never cost · 0 = nobody on it</div>
+          <div class="wb-cap">Crew — divides duration, never cost · 0 = nobody on it ·
+            naming people on a line sets it</div>
           <div class="wb-ctl">
-            ${raw(wbDivisions().filter(d => d.crew).map(d => `
-              <label class="wb-num" title="How many ${esc(d.label)} artists are on this">
+            ${raw(wbDivisions().filter(d => d.crew).map(d => {
+              /* Read-only once names are on the lines: the headcount is then a
+                 fact rather than a knob, and a box you can still type into is
+                 a second place to say it and a second thing to disagree. */
+              const named = namedIn(draft, d.id);
+              return `
+              <label class="wb-num${named.length ? ' wb-num-set' : ''}"
+                     title="${named.length
+                       ? esc(named.map(id => S.byId(S.get().people, id)?.name || '?').join(', '))
+                         + ' — from the people named on the ' + esc(d.id) + ' lines'
+                       : `How many ${esc(d.label)} artists are on this`}">
                 <span class="pill-div" style="background:${esc(divColor(d.id))}">${esc(d.id)}</span>
                 <input type="number" min="0" step="1" data-change="crew" data-d="${d.id}"
-                       value="${crewOf(draft, d.id)}">
-              </label>`).join(''))}
+                       value="${crewOf(draft, d.id)}"${named.length ? ' readonly' : ''}>
+                ${named.length ? '<svg class="ico" style="width:12px;height:12px;opacity:.6"><use href="#i-people"></use></svg>' : ''}
+              </label>`;
+            }).join(''))}
           </div>
         </div>
         <div class="wb-rowgrp">
@@ -177,6 +190,7 @@ function calcTab(ctx) {
         <th style="width:118px">Complexity</th><th style="width:132px">Approach</th>
         <th class="num" style="width:64px">Qty</th><th class="num" style="width:62px">Base h</th>
         <th class="num" style="width:74px">Hours</th><th style="width:120px">Rung</th>
+        <th style="width:140px" title="Who is doing this line. Naming people schedules it against them and sets the crew.">Who</th>
         <th class="num" style="width:92px">Cost</th><th></th>
       </tr></thead>
       <tbody data-wb-rows>${raw(r.lines.length ? r.lines.map(l => `<tr data-l="${l.id}" draggable="true">
@@ -198,17 +212,18 @@ function calcTab(ctx) {
         <td class="num"><b>${n1(l.hours)}</b></td>
         <td><select data-change="line" data-k="seniority" style="width:100%">${
           sel(SENIORITY.map(x => ({ v: x, t: x })), l.seniority || l.seniorityUsed)}</select></td>
+        <td>${whoCell(l)}</td>
         <td class="num">${fmtMoneyFull(l.cost, sym())}</td>
         <td class="act"><button class="btn icon sm subtle" data-act="line-menu"><svg class="ico"><use href="#i-dots"></use></svg></button></td>
-      </tr>`).join('') : `<tr><td colspan="11" class="tiny mute" style="padding:26px;text-align:center">
+      </tr>`).join('') : `<tr><td colspan="12" class="tiny mute" style="padding:26px;text-align:center">
         Nothing yet. <b>Add work item</b> to start, or <b>Preset</b> for a common deliverable.</td></tr>`)}
       </tbody>
       ${raw(r.lines.length ? `<tfoot><tr>
         <td colspan="7" class="tiny mute" style="text-align:right">raw effort</td>
-        <td class="num"><b>${n1(r.effortHours)}</b></td><td></td>
+        <td class="num"><b>${n1(r.effortHours)}</b></td><td></td><td></td>
         <td class="num"><b>${fmtMoneyFull(r.baseCost, sym())}</b></td><td></td></tr>
         <tr><td colspan="7" class="tiny mute" style="text-align:right">+ ${r.reviewPct}% review + ${r.contPct}% contingency</td>
-        <td class="num"><b>${n1(r.totalHours)}</b></td><td></td>
+        <td class="num"><b>${n1(r.totalHours)}</b></td><td></td><td></td>
         <td class="num"><b>${fmtMoneyFull(r.totalCost, sym())}</b></td><td></td></tr></tfoot>` : '')}
     </table></div></div>
   </section>`;
@@ -1025,6 +1040,94 @@ function ratesTab() {
   </section>`;
 }
 
+/* ---------- who is on a line --------------------------------------------- */
+
+/**
+ * The Who cell: a button, whatever is in it.
+ *
+ * Empty reads "Crew ×2" rather than being blank, because blank looks like a
+ * column that does not apply to this row — and the fact it is stating, that
+ * this line is on the anonymous crew, is the thing naming somebody changes.
+ */
+function whoCell(l) {
+  const people = linePeople(l).map(id => S.byId(S.get().people, id)).filter(Boolean);
+  /* The first name in full plus a count, NOT a list of surnames: a roster
+     holds "You (Art Producer Lead)" as well as "Ana Ruiz", and every rule for
+     picking one word out of a name gets that one wrong. The cell ellipsises,
+     and the tooltip has everybody. */
+  const label = people.length
+    ? people[0].name + (people.length > 1 ? ` +${people.length - 1}` : '')
+    : `Crew ×${crewOf(draft, l.division)}`;
+  return `<button class="btn sm subtle wb-who${people.length ? ' on' : ''}" data-act="who"
+     title="${people.length ? esc(people.map(p => p.name).join(', ')) : 'Nobody named — this line is on the division crew'}
+Click to choose who is on this line">
+     ${icon('people')}<span>${esc(label)}</span></button>`;
+}
+
+/**
+ * Choose who is on one line.
+ *
+ * Their own division first and pre-ticked-for is deliberately NOT done —
+ * nothing is ticked until you tick it, because a default here would quietly
+ * book somebody's weeks. Everybody else is listed underneath rather than
+ * hidden, since a 2D line genuinely does sometimes go to whoever is free.
+ */
+async function assignDialog(l) {
+  /* The stored line carries BASE hours; the computed hours are the ones the
+     dialog is talking about, and they only exist after complexity, quantity
+     and approach have been applied. Reading `l.hours` gave "0 working days
+     each", which is the kind of zero that reads as a broken feature. */
+  const hours = estimate(draft).lines.find(x => x.id === l.id)?.hours || 0;
+  const all = (S.get().people || []).filter(p => p.active !== false && p.name);
+  if (!all.length) { toast('No people on the roster yet — add the team first.', 'warn'); return false; }
+  const cur = new Set(linePeople(l));
+  const mine = all.filter(p => p.division === l.division);
+  const rest = all.filter(p => p.division !== l.division);
+
+  const group = (list, title) => list.length ? `
+    <div class="wb-pick-g">
+      <div class="wb-pick-h"><b>${esc(title)}</b>
+        <span class="spacer" style="flex:1"></span>
+        <span class="tiny mute">${list.length}</span></div>
+      ${list.map(p => `<label class="wb-pick-i">
+        <input type="checkbox" data-p="${esc(p.id)}"${cur.has(p.id) ? ' checked' : ''}>
+        <span style="flex:1">${esc(p.name)}</span>
+        <span class="tiny mute">${esc(p.division || '—')} · ${esc(p.seniority || '')}</span>
+      </label>`).join('')}
+    </div>` : '';
+
+  const res = await dialog({
+    title: `Who is on “${l.name}”?`, wide: true,
+    body: `
+      <div class="banner"><svg class="ico"><use href="#i-info"></use></svg>
+        <div>Everybody you name here shares this line's ${n1(hours)} hours and has that
+          time booked in their own week on the schedule. Two people halve how long it takes;
+          they do not halve what it costs.</div></div>
+      <div class="wb-pick">${group(mine, `${wbDivision(l.division).label}`)}${group(rest, 'Everybody else')}</div>`,
+    footer: `<span class="tiny mute" data-count></span>
+             <div class="spacer" style="flex:1"></div>
+             <button class="btn" data-no>Cancel</button>
+             <button class="btn primary" data-ok>Save</button>`,
+    onMount: ({ root, close }) => {
+      const count = () => {
+        const n = root.querySelectorAll('[data-p]:checked').length;
+        root.querySelector('[data-count]').textContent = n
+          ? `${n} on this line — ${n1(hours / (wbSettings().hoursPerDay || 8) / n)} working days each`
+          : 'Nobody named — this line stays on the division crew';
+      };
+      root.addEventListener('change', count);
+      count();
+      root.querySelector('[data-no]').onclick = () => close(undefined);
+      root.querySelector('[data-ok]').onclick = () =>
+        close([...root.querySelectorAll('[data-p]:checked')].map(x => x.dataset.p));
+    },
+  });
+  if (!res) return false;
+  l.people = res;
+  dirty = true;
+  return true;
+}
+
 /* ---------- dialogs ------------------------------------------------------ */
 
 async function addLineDialog() {
@@ -1443,6 +1546,7 @@ export default {
         if (!l) return;
         menu(ev, [
           { label: 'Edit…', icon: 'edit', run: () => editLineDialog(l).then(ok => ok && redraw()) },
+          { label: 'Who is on it…', icon: 'people', run: () => assignDialog(l).then(ok => ok && redraw()) },
           { label: 'Duplicate', icon: 'file', run: () => {
             draft.lines.splice(draft.lines.indexOf(l) + 1, 0, { ...l, id: S.uid('wbl') });
             dirty = true; redraw();
@@ -1458,6 +1562,11 @@ export default {
             draft.lines = draft.lines.filter(x => x.id !== id); dirty = true; redraw();
           } },
         ]);
+      },
+      who: el => {
+        const id = el.closest('[data-l]').dataset.l;
+        const l = draft.lines.find(x => x.id === id);
+        if (l) assignDialog(l).then(ok => ok && redraw());
       },
       'add-line': () => addLineDialog().then(r => r && redraw()),
       /* Save what is on screen as a new preset. The quickest way to get one

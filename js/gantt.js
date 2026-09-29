@@ -198,7 +198,13 @@ function labelCell(bar, depth, collapsed, hasKids, sym) {
 
   const meta = [];
   if (bar.hours) meta.push(`${fmtNum(bar.hours, 0)}h`);
-  if (bar.crew && bar.kind !== 'project') meta.push(`${bar.crew}×`);
+  /* Who, when anybody is named: the first name in full and a count for the
+     rest. Not a list of surnames — a roster holds "You (Art Producer Lead)"
+     as well as "Ana Ruiz", and every rule for picking one word out of a name
+     gets that one wrong. The full list is in the bar's tooltip. */
+  if (bar.peopleNames?.length) {
+    meta.push(bar.peopleNames[0] + (bar.peopleNames.length > 1 ? ` +${bar.peopleNames.length - 1}` : ''));
+  } else if (bar.crew && bar.kind !== 'project') meta.push(`${bar.crew}×`);
   if (bar.workDays) meta.push(`${fmtNum(bar.workDays, 0)}d`);
 
   return `<div class="gx-lbl gx-k-${esc(bar.kind)}${bar.scenario ? ' scn' : ''}${hasKids ? ' has-kids' : ''}"
@@ -236,7 +242,7 @@ function barCell(bar, geo, sym) {
     `${fmtDate(bar.start, 'long')} → ${fmtDate(bar.end, 'long')}`,
     bar.workDays ? `${fmtNum(bar.workDays, 0)} working days` : '',
     bar.hours ? `${fmtNum(bar.hours, 1)} person-hours` : '',
-    bar.crew ? `crew of ${bar.crew}` : '',
+    bar.peopleNames?.length ? bar.peopleNames.join(', ') : (bar.crew ? `crew of ${bar.crew}` : ''),
     bar.cost ? fmtMoney(bar.cost, sym) : '',
   ].filter(Boolean).join(' · ');
 
@@ -437,7 +443,7 @@ export function capacityStripHTML(load, geo, { onlyDivisions = null, sym = '$' }
   const rows = load.rows.filter(r => !onlyDivisions || onlyDivisions.has(r.division.id));
   if (!rows.length) return '';
 
-  const cell = (c, div, i) => {
+  const cell = (c, div, i, who = null) => {
     const pct = c.loadPct;
     const step = !Number.isFinite(pct) ? (c.needed > 0 ? 5 : 0)
       : pct > 100 ? 5 : pct > 85 ? 4 : pct > 60 ? 3 : pct > 25 ? 2 : pct > 0 ? 1 : 0;
@@ -455,19 +461,48 @@ export function capacityStripHTML(load, geo, { onlyDivisions = null, sym = '$' }
        you can move, and a bare percentage cannot tell you which. */
     const src = c.source === 'allocation'
       ? `committed ${fmtNum(c.committed, 1)}d — from allocation (${fmtNum(c.scheduled, 1)}d of it itemised)`
-      : `committed ${fmtNum(c.committed, 1)}d — all itemised work`;
-    const tip = `${div.label} · ${c.period.label} (${fmtDate(c.period.from)} → ${fmtDate(c.period.to)})\n`
+      : c.committed != null ? `committed ${fmtNum(c.committed, 1)}d — all itemised work` : '';
+    const tip = `${who ? who.person.name : div.label} · ${c.period.label} `
+      + `(${fmtDate(c.period.from)} → ${fmtDate(c.period.to)})\n`
       + (c.freePct == null
-          ? `no capacity here at all — ${fmtNum(c.needed, 1)} person-days needed\n`
+          ? (who ? `${who.person.name} has no capacity on this chart — ${fmtNum(c.needed, 1)} person-days named on them\n`
+                 : `no capacity here at all — ${fmtNum(c.needed, 1)} person-days needed\n`)
           : `${Math.round(c.freePct)}% of capacity left · `
             + `${fmtNum(c.needed, 1)} person-days needed of ${fmtNum(c.available, 1)} available\n`)
       + src
       + (c.extra > 0.05 ? `\n+ ${fmtNum(c.extra, 1)}d from this scenario` : '')
       + (c.gap > 0.05 ? `\nSHORT ${fmtNum(c.gap, 1)} days` : c.gap < -0.05 ? `\n${fmtNum(-c.gap, 1)} days spare` : '')
-      + (c.contributors.length ? `\n${c.contributors.length} piece(s) of work — click for the breakdown` : '\nClick for the breakdown');
+      + (who ? '' : c.contributors.length
+          ? `\n${c.contributors.length} piece(s) of work — click for the breakdown`
+          : '\nClick for the breakdown');
+    /* A person's cell is a read-out, not a drill-down: the dialog behind a
+       division cell reconciles allocation against the board, which is a
+       question about a discipline and has no per-person answer yet. */
     return `<span class="gx-cap s${step}${c.over ? ' over' : ''}" style="left:${left}px;width:${w - 1}px"
-       data-act="gx-cell" data-d="${esc(div.id)}" data-i="${i}" title="${esc(tip)}">${txt}</span>`;
+       ${who ? '' : `data-act="gx-cell" data-d="${esc(div.id)}" data-i="${i}"`} title="${esc(tip)}">${txt}</span>`;
   };
+
+  /*
+   * A person's own lane, under the discipline they are part of.
+   *
+   * Only people with work named on them appear — a lane per member of the
+   * roster would bury the three that matter under thirty reading 100% all the
+   * way across. It is the same arithmetic as the row above it at a finer
+   * grain, which is the whole point: a division can have a fifth of its
+   * capacity free while the one person who was named on both deliverables is
+   * 40% over, and the division row alone can never show that.
+   */
+  const personRow = (pr, div) => `
+    <div class="gx-cap-row gx-cap-person">
+      <div class="gx-cap-lbl" title="${esc(pr.person.name || '')}${
+          pr.noSupply ? ' — no capacity on this chart: not on the roster, or not allocated to this project' : ''}">
+        <span class="gx-cap-kid"></span>
+        <span class="gx-name">${esc(pr.person.name || pr.person.id)}</span>
+        <span class="gx-meta">${pr.noSupply ? '<b class="bad">no capacity</b>'
+          : pr.shortfallDays > 0.5 ? `<b class="bad">−${fmtNum(pr.shortfallDays, 0)}d</b>` : ''}</span>
+      </div>
+      <div class="gx-cap-track">${pr.cells.map((c, i) => cell(c, div, i, pr)).join('')}</div>
+    </div>`;
 
   return `<div class="gx-cap-strip">
     ${rows.map(r => `
@@ -479,7 +514,8 @@ export function capacityStripHTML(load, geo, { onlyDivisions = null, sym = '$' }
           <span class="gx-meta">${fmtNum(r.heads, 1)}p${r.shortfallDays > 0.5 ? ` · <b class="bad">−${fmtNum(r.shortfallDays, 0)}d</b>` : ''}</span>
         </div>
         <div class="gx-cap-track">${r.cells.map((c, i) => cell(c, r.division, i)).join('')}</div>
-      </div>`).join('')}
+      </div>
+      ${(r.people || []).map(pr => personRow(pr, r.division)).join('')}`).join('')}
   </div>`;
 }
 

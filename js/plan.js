@@ -409,6 +409,22 @@ export function scopeBars(est, { crewOverride = null, startOverride = null,
     ? calc.byDivision.slice().sort((a, b) => b.hours - a.hours)
     : calc.byDivision;
 
+  /*
+   * Offsets from `lineSchedule()` are fractional working days from the start
+   * of the estimate; these turn them into dates.
+   *
+   * `i0`/`i1` are the first and last whole working day a span touches, and
+   * the bar's `workDays` is taken from THOSE rather than from `ceil(len)`.
+   * They differ whenever a span straddles a day boundary — half a day that
+   * starts at lunchtime touches two — and `spreadBar()` in the load model
+   * divides a bar's hours by `workDays` and then adds that to every day the
+   * bar covers. A `workDays` smaller than the days covered would post the
+   * work more than once against the same week.
+   */
+  const i0 = off => Math.floor(off);
+  const i1 = off => Math.floor(Math.max(0, off - 1e-9));
+  const dayAt = i => addWorkDays(start, i + 1);   // addWorkDays(s, 1) is s itself
+
   for (const d of lanes) {
     if (!d.hours) continue;
     const crew = crewOverride && crewOverride[d.division.id] != null
@@ -419,21 +435,73 @@ export function scopeBars(est, { crewOverride = null, startOverride = null,
        says "unstaffed" in red rather than silently showing a plausible bar. */
     const unstaffed = crew === 0;
     const effective = unstaffed ? 1 : crew;
-    const days = Math.max(1, Math.ceil(d.hours / hpd / effective));
-    const from = est.parallel === false ? cursor : start;
-    const to = addWorkDays(from, days);
-    if (est.parallel === false) cursor = addWorkDays(to, 2);   // next starts the following day
-    if (to > latest) latest = to;
+
+    /*
+     * A CREW SWEEP IGNORES THE SCHEDULE, and has to.
+     *
+     * `crewOverride` is the "what if three people did it" comparison, which
+     * asks a question about an anonymous headcount — there is no answer to
+     * "what if three people did it" that also honours which two people you
+     * named. So an override falls back to the flat hours ÷ crew length and
+     * never splits into lines.
+     */
+    const swept = crewOverride && crewOverride[d.division.id] != null;
+    const mine = swept ? [] : calc.lines.filter(l => l.division === d.division.id && l.slot);
+    /* One row per line once somebody is named in this division, one row for
+       the division while nobody is. Splitting an unassigned lane would add a
+       row per line to every chart in the app and say nothing new — every
+       line would sit on the same anonymous crew. */
+    const split = !swept && d.people.length > 0 && mine.length > 0;
+
+    let laneFrom, laneTo, laneDays;
+    if (swept) {
+      laneDays = Math.max(1, Math.ceil(d.hours / hpd / effective));
+      laneFrom = est.parallel === false ? cursor : start;
+      laneTo = addWorkDays(laneFrom, laneDays);
+      if (est.parallel === false) cursor = addWorkDays(laneTo, 2);
+    } else {
+      const blk = calc.sched.byDivision.get(d.division.id) || { from: 0, to: d.elapsedDays };
+      const a = i0(blk.from), b = Math.max(i0(blk.from), i1(blk.to));
+      laneFrom = dayAt(a);
+      laneTo = dayAt(b);
+      laneDays = b - a + 1;
+    }
+    if (laneTo > latest) latest = laneTo;
 
     kids.push({
       id: `${pid}:${d.division.id}`, kind: 'division', parentId: pid,
       label: d.division.label, projectId: est.projectId, divisionId: d.division.id,
-      start: from, end: to, workDays: days,
+      start: laneFrom, end: laneTo, workDays: laneDays,
       hours: d.hours, crew, unstaffed,
-      cost: d.cost, demand: true,
+      cost: d.cost,
+      /* The demand moves down to the lines when they are drawn, or the same
+         hours would be counted twice against the same week. */
+      demand: !split,
+      people: split ? [] : d.people,
       color: d.division.color || 'var(--muted)',
       ref: est.id, sub: `${d.lines} line${d.lines === 1 ? '' : 's'}`,
     });
+
+    if (!split) continue;
+
+    for (const l of mine) {
+      const s = l.slot;
+      const a = i0(s.from), b = Math.max(i0(s.from), i1(s.to));
+      kids.push({
+        id: `${pid}:${d.division.id}:${l.id}`, kind: 'wbline',
+        parentId: `${pid}:${d.division.id}`,
+        label: l.name + (l.qty > 1 ? ` ×${l.qty}` : ''),
+        projectId: est.projectId, divisionId: d.division.id,
+        start: dayAt(a), end: dayAt(b), workDays: b - a + 1,
+        hours: l.hours, crew: s.crew, unstaffed: s.unstaffed,
+        cost: l.cost, demand: true,
+        /* The whole point: this line's hours land on THESE people's weeks. */
+        people: s.people,
+        peopleNames: s.people.map(id => S.byId(state.people, id)?.name || '?'),
+        color: d.division.color || 'var(--muted)',
+        ref: est.id, refLine: l.id,
+      });
+    }
   }
 
   const parent = {
@@ -726,7 +794,7 @@ export function requestBars(r, state = S.get()) {
  * defensible default, and the clipping to the visible window is what keeps a
  * bar that starts before the view from dumping its whole effort into week one.
  */
-function spreadBar(bar, periods, cal, pIdx, out) {
+function spreadBar(bar, periods, cal, pIdx, out, hours = bar.hours) {
   const hpd = HPD();
   const days = [];
   let c = bar.start, guard = 0;
@@ -737,7 +805,7 @@ function spreadBar(bar, periods, cal, pIdx, out) {
   /* The bar's total working length, including any part outside the window —
      the per-day rate must not change because you scrolled. */
   const fullLength = Math.max(1, bar.workDays || workDaysBetween(bar.start, bar.end) + 1);
-  const perDay = (bar.hours / hpd) / fullLength;
+  const perDay = (hours / hpd) / fullLength;
   for (const iso of days) out[pIdx.get(iso)] += perDay;
 }
 
@@ -757,6 +825,12 @@ export function loadGrid(bars, periods, cal, sup, { useAllocation = true } = {})
   const demandBy = new Map(divs.map(d => [d.id, periods.map(() => 0)]));
   const scnBy    = new Map(divs.map(d => [d.id, periods.map(() => 0)]));
   const contributors = new Map();          // `${div}|${period}` -> Bar[]
+  /* Named work, posted a second time against the individuals rather than
+     against the discipline. The same hours, split evenly between the people
+     on the bar — the division total is unchanged, this is the same total seen at
+     a finer grain. */
+  const personNeed = new Map();            // personId -> days[]
+  const personBars = new Map();            // personId -> Bar[]
 
   for (const b of bars) {
     if (!b.demand || !b.hours || !b.divisionId) continue;
@@ -771,7 +845,58 @@ export function loadGrid(bars, periods, cal, sup, { useAllocation = true } = {})
         contributors.get(k).push({ bar: b, days: lane[i] - before[i] });
       }
     }
+
+    const who = b.people || [];
+    if (!who.length) continue;
+    for (const id of who) {
+      if (!personNeed.has(id)) { personNeed.set(id, periods.map(() => 0)); personBars.set(id, []); }
+      spreadBar(b, periods, cal, pIdx, personNeed.get(id), b.hours / who.length);
+      personBars.get(id).push(b);
+    }
   }
+
+  /*
+   * One row per person who has named work in this window.
+   *
+   * Only those people: a lane per member of the roster would bury the four
+   * that matter under thirty that say 100% all the way across, and the reason
+   * to look at an individual at all is that somebody put their name on
+   * something. Their supply is their own days out of `supply()` — already
+   * after leave, part-time capacity and, on a project chart, their allocation
+   * to that project — so the person lane and the division lane above it are
+   * the same arithmetic at two grains.
+   */
+  const personSupply = new Map((sup.rows || []).map(r => [r.person.id, r]));
+  const roster = S.get().people || [];
+  const personRows = [...personNeed.entries()].map(([id, need]) => {
+    const src = personSupply.get(id);
+    const avail = src?.days || periods.map(() => 0);
+    /* Their own division when the supply has never heard of them, or the row
+       would belong to no division and be filtered out of the strip entirely.
+       That is precisely the person who needs showing: named on the work, and
+       not in the capacity this chart is counting. */
+    const onRoster = roster.find(p => p.id === id);
+    return {
+      person: src?.person || onRoster || { id, name: id },
+      division: src?.division || onRoster?.division || '',
+      cells: periods.map((p, i) => {
+        const a = avail[i], n = need[i];
+        return {
+          period: p, available: a, needed: n, gap: n - a,
+          loadPct: a > 0 ? (n / a) * 100 : (n > 0 ? Infinity : 0),
+          freePct: a > 0 ? ((a - n) / a) * 100 : null,
+          over: n - a > 0.05,
+          contributors: (personBars.get(id) || []).map(bar => ({ bar, days: 0 })),
+        };
+      }),
+      /* Not on the roster any more, or not allocated to this project — the
+         work is named on somebody this chart has no capacity for, which is
+         worth saying rather than drawing as a full bar. */
+      noSupply: !src,
+      totalNeeded: sum(need),
+      shortfallDays: sum(periods.map((_, i) => Math.max(0, need[i] - avail[i]))),
+    };
+  }).sort((a, b) => b.totalNeeded - a.totalNeeded);
 
   /*
    * ALLOCATION IS THE FLOOR UNDER DEMAND, AND THIS IS THE IMPORTANT BIT.
@@ -844,6 +969,9 @@ export function loadGrid(bars, periods, cal, sup, { useAllocation = true } = {})
       division: d, cells,
       heads: sup.heads.get(d.id) || 0,
       perProject: !!sup.perProject,
+      /* The named individuals inside this discipline, so the strip can open
+         one row into the people it is made of. */
+      people: personRows.filter(r => r.division === d.id),
       totalAvailable: sum(avail),
       totalNeeded: sum(cells, c => c.needed),
       totalScheduled: sum(sched),
@@ -870,6 +998,10 @@ export function loadGrid(bars, periods, cal, sup, { useAllocation = true } = {})
 
   return {
     periods, rows, totals,
+    /* Every named person with work in this window, division or not — the
+       views that want a flat list (an orphan whose division has gone) read
+       this rather than digging through the rows. */
+    personRows,
     shortfallDays: sum(rows, r => r.shortfallDays),
     /* The periods where at least one division cannot cover its work. This is
        the answer to "what am I missing for that particular period", and it is
